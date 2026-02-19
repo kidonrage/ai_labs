@@ -19,8 +19,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         // 🔑 Configure your API here
-        let apiBaseURL = URL(string: "https://api.proxyapi.ru")!     // e.g. https://api.yourserver.com
-        let apiKey = "<API_KEY>"
+        let apiBaseURL = URL(string: "https://api.proxyapi.ru/")!     // e.g. https://api.yourserver.com
+        let apiKey = "sk-ptn4RBs3CsNgxB3DdGonVL7dGkQN9NEz"
 
         let rootVC = ChatViewController(
             apiBaseURL: apiBaseURL,

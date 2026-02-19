@@ -127,9 +127,27 @@ final class OpenAIClient {
 
 // MARK: - Controller (MVC)
 
+import UIKit
+
 final class ChatViewController: UIViewController {
 
-    // UI
+    // MARK: UI
+
+    private let scrollView: UIScrollView = {
+        let sv = UIScrollView()
+        sv.keyboardDismissMode = .interactive
+        sv.translatesAutoresizingMaskIntoConstraints = false
+        return sv
+    }()
+
+    private let stackView: UIStackView = {
+        let s = UIStackView()
+        s.axis = .vertical
+        s.spacing = 16
+        s.translatesAutoresizingMaskIntoConstraints = false
+        return s
+    }()
+
     private let inputTextView: UITextView = {
         let tv = UITextView()
         tv.text = "Hello AI!"
@@ -151,16 +169,6 @@ final class ChatViewController: UIViewController {
         return b
     }()
 
-    private let outputLabel: UILabel = {
-        let l = UILabel()
-        l.numberOfLines = 0
-        l.font = .systemFont(ofSize: 16)
-        l.textColor = .label
-        l.text = "Response will appear here."
-        l.translatesAutoresizingMaskIntoConstraints = false
-        return l
-    }()
-
     private let activity: UIActivityIndicatorView = {
         let a = UIActivityIndicatorView(style: .medium)
         a.hidesWhenStopped = true
@@ -168,14 +176,25 @@ final class ChatViewController: UIViewController {
         return a
     }()
 
-    // Model dependency
+    /// ✅ Лучше чем UILabel для больших текстов
+    private let outputTextView: UITextView = {
+        let tv = UITextView()
+        tv.isEditable = false
+        tv.isScrollEnabled = false // важно: скроллим внешним scrollView
+        tv.font = .systemFont(ofSize: 14)
+        tv.textColor = .label
+        tv.backgroundColor = .secondarySystemBackground
+        tv.layer.cornerRadius = 12
+        tv.textContainerInset = UIEdgeInsets(top: 12, left: 10, bottom: 12, right: 10)
+        tv.text = "Response will appear here."
+        tv.translatesAutoresizingMaskIntoConstraints = false
+        return tv
+    }()
+
+    // MARK: Model
+
     private let client: OpenAIClient
 
-    // MARK: Init
-
-    /// - Parameters:
-    ///   - apiBaseURL: Example: URL(string: "https://your-domain.com")!
-    ///   - apiKey: Your API key string
     init(apiBaseURL: URL, apiKey: String) {
         self.client = OpenAIClient(baseURL: apiBaseURL, apiKey: apiKey)
         super.init(nibName: nil, bundle: nil)
@@ -183,7 +202,7 @@ final class ChatViewController: UIViewController {
     }
 
     required init?(coder: NSCoder) {
-        fatalError("Use init(apiBaseURL:apiKey:) instead.")
+        fatalError("Use init(apiBaseURL:apiKey:)")
     }
 
     // MARK: Lifecycle
@@ -192,69 +211,91 @@ final class ChatViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
 
-        layout()
-        sendButton.addTarget(self, action: #selector(didTapSend), for: .touchUpInside)
+        setupLayout()
+        sendButton.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
 
-        // Dismiss keyboard on tap
         let tap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
         tap.cancelsTouchesInView = false
         view.addGestureRecognizer(tap)
     }
 
-    // MARK: Layout
+    // MARK: Layout (✅ правильный scroll layout)
 
-    private func layout() {
-        let stack = UIStackView(arrangedSubviews: [inputTextView, sendButton, activity, outputLabel])
-        stack.axis = .vertical
-        stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
+    private func setupLayout() {
+        view.addSubview(scrollView)
+        scrollView.addSubview(stackView)
 
-        view.addSubview(stack)
+        stackView.addArrangedSubview(inputTextView)
+        stackView.addArrangedSubview(sendButton)
+        stackView.addArrangedSubview(activity)
+        stackView.addArrangedSubview(outputTextView)
 
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
-            stack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            // scrollView
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            inputTextView.heightAnchor.constraint(equalToConstant: 120),
+            // stackView pinned to contentLayoutGuide
+            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 16),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -16),
+            stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
+            stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
 
+            // IMPORTANT: stackView width == scrollView frame width (minus insets)
+            stackView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32),
+
+            inputTextView.heightAnchor.constraint(equalToConstant: 200),
             sendButton.heightAnchor.constraint(equalToConstant: 44),
         ])
     }
 
     // MARK: Actions
 
-    @objc private func didTapSend() {
+    @objc private func sendTapped() {
         dismissKeyboard()
 
         let text = inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
-            outputLabel.text = "Please enter some text."
+            outputTextView.text = "Please enter some text."
             return
         }
 
         setLoading(true)
-        outputLabel.text = "Sending..."
+        outputTextView.text = "Loading..."
 
-        client.sendText(text, model: "gpt-4o") { [weak self] result in
+        client.sendText(text) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.setLoading(false)
 
                 switch result {
-                case .success(let answerText):
-                    self.outputLabel.text = answerText
+                case .success(let answer):
+                    self.outputTextView.text = answer
+                    self.scrollToBottom()
+
                 case .failure(let error):
-                    self.outputLabel.text = "Error: \(error.localizedDescription)"
+                    self.outputTextView.text = "Error: \(error.localizedDescription)"
+                    self.scrollToBottom()
                 }
             }
         }
     }
 
-    private func setLoading(_ isLoading: Bool) {
-        sendButton.isEnabled = !isLoading
-        inputTextView.isEditable = !isLoading
-        isLoading ? activity.startAnimating() : activity.stopAnimating()
+    private func setLoading(_ loading: Bool) {
+        sendButton.isEnabled = !loading
+        inputTextView.isEditable = !loading
+        loading ? activity.startAnimating() : activity.stopAnimating()
+    }
+
+    private func scrollToBottom() {
+        // важно: заставляем автолэйаут пересчитать высоты ДО измерения contentSize
+        view.layoutIfNeeded()
+        scrollView.layoutIfNeeded()
+
+        let y = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+        scrollView.setContentOffset(CGPoint(x: 0, y: y), animated: true)
     }
 
     @objc private func dismissKeyboard() {
