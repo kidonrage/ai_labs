@@ -29,6 +29,7 @@ struct ContentItemDTO: Decodable {
 struct OpenAIRequestBody: Encodable {
     let model: String
     let input: String
+    let temperature: Float
 }
 
 // MARK: - Model (API Client)
@@ -58,7 +59,7 @@ final class OpenAIClient {
         self.session = session
     }
 
-    func sendText(_ text: String, model: String = "gpt-4o", completion: @escaping (Result<String, Error>) -> Void) {
+    func sendText(_ text: String, model: String = "gpt-4o", temperature: Float, completion: @escaping (Result<String, Error>) -> Void) {
         let endpoint = baseURL.appendingPathComponent("openai/v1/responses")
 
         var request = URLRequest(url: endpoint)
@@ -66,7 +67,7 @@ final class OpenAIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        let body = OpenAIRequestBody(model: model, input: text)
+        let body = OpenAIRequestBody(model: model, input: text, temperature: temperature)
 
         do {
             request.httpBody = try JSONEncoder().encode(body)
@@ -160,6 +161,18 @@ final class ChatViewController: UIViewController {
         return tv
     }()
 
+    // ✅ NEW: temperature
+    private let temperatureTextField: UITextField = {
+        let tf = UITextField()
+        tf.placeholder = "temperature (0.0 - 2.0)"
+        tf.text = "1.0"
+        tf.keyboardType = .decimalPad
+        tf.borderStyle = .roundedRect
+        tf.clearButtonMode = .whileEditing
+        tf.translatesAutoresizingMaskIntoConstraints = false
+        return tf
+    }()
+
     private let sendButton: UIButton = {
         var config = UIButton.Configuration.filled()
         config.title = "send"
@@ -226,6 +239,7 @@ final class ChatViewController: UIViewController {
         scrollView.addSubview(stackView)
 
         stackView.addArrangedSubview(inputTextView)
+        stackView.addArrangedSubview(temperatureTextField) // ✅ NEW
         stackView.addArrangedSubview(sendButton)
         stackView.addArrangedSubview(activity)
         stackView.addArrangedSubview(outputTextView)
@@ -247,6 +261,7 @@ final class ChatViewController: UIViewController {
             stackView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32),
 
             inputTextView.heightAnchor.constraint(equalToConstant: 200),
+            temperatureTextField.heightAnchor.constraint(equalToConstant: 44), // ✅ NEW
             sendButton.heightAnchor.constraint(equalToConstant: 44),
         ])
     }
@@ -262,10 +277,22 @@ final class ChatViewController: UIViewController {
             return
         }
 
+        // ✅ NEW: validate temperature as string Float in 0.0...2.0
+        let temperatureString = (temperatureTextField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Разрешим запятую, если юзер ввёл "0,7"
+        let normalized = temperatureString.replacingOccurrences(of: ",", with: ".")
+
+        guard let temp = Float(normalized), (0.0...2.0).contains(temp) else {
+            outputTextView.text = "Temperature must be a Float string from 0.0 to 2.0 (e.g., 0.7, 1.0, 1.8)."
+            return
+        }
+
         setLoading(true)
         outputTextView.text = "Loading..."
 
-        client.sendText(text) { [weak self] result in
+        // ✅ NEW: передаём temperature строкой
+        client.sendText(text, temperature: temp) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.setLoading(false)
@@ -286,6 +313,7 @@ final class ChatViewController: UIViewController {
     private func setLoading(_ loading: Bool) {
         sendButton.isEnabled = !loading
         inputTextView.isEditable = !loading
+        temperatureTextField.isEnabled = !loading // ✅ NEW
         loading ? activity.startAnimating() : activity.stopAnimating()
     }
 
