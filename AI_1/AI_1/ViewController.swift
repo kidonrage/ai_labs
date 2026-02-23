@@ -7,10 +7,6 @@
 
 import UIKit
 
-// MARK: - Controller (MVC)
-
-import UIKit
-
 final class ChatViewController: UIViewController {
 
     // MARK: UI
@@ -77,6 +73,16 @@ final class ChatViewController: UIViewController {
         return a
     }()
 
+    private let statsLabel: UILabel = {
+        let l = UILabel()
+        l.numberOfLines = 0
+        l.textColor = .secondaryLabel
+        l.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        l.text = "Tokens: —\nCost: —\nDuration: —"
+        l.translatesAutoresizingMaskIntoConstraints = false
+        return l
+    }()
+
     private let outputTextView: UITextView = {
         let tv = UITextView()
         tv.isEditable = false
@@ -130,6 +136,7 @@ final class ChatViewController: UIViewController {
         stackView.addArrangedSubview(temperatureTextField)
         stackView.addArrangedSubview(sendButton)
         stackView.addArrangedSubview(activity)
+        stackView.addArrangedSubview(statsLabel)
         stackView.addArrangedSubview(outputTextView)
 
         NSLayoutConstraint.activate([
@@ -176,8 +183,6 @@ final class ChatViewController: UIViewController {
         }()
 
         let temperatureString = (temperatureTextField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Разрешим запятую, если юзер ввёл "0,7"
         let normalized = temperatureString.replacingOccurrences(of: ",", with: ".")
 
         guard let temp = Float(normalized), (0.0...2.0).contains(temp) else {
@@ -187,6 +192,7 @@ final class ChatViewController: UIViewController {
 
         setLoading(true)
         outputTextView.text = "Loading..."
+        statsLabel.text = "Tokens: —\nCost: —\nDuration: —"
 
         client.sendText(text, model: model, temperature: temp) { [weak self] result in
             DispatchQueue.main.async {
@@ -194,28 +200,66 @@ final class ChatViewController: UIViewController {
                 self.setLoading(false)
 
                 switch result {
-                case .success(let answer):
-                    self.outputTextView.text = answer
+                case .success(let response):
+                    self.outputTextView.text = response.answer
+
+                    // Stats UI
+                    let tokensLine: String = {
+                        if let usage = response.usage {
+                            return "Tokens: in \(usage.inputTokens), out \(usage.outputTokens), total \(usage.totalTokens)"
+                        } else {
+                            return "Tokens: —"
+                        }
+                    }()
+
+                    let costLine: String = {
+                        if let cost = response.costRub, let costStr = Self.formatRub(cost) {
+                            return "Cost: \(costStr)"
+                        } else {
+                            return "Cost: —"
+                        }
+                    }()
+
+                    let durationLine: String = {
+                        if let duration = response.durationSeconds {
+                            return "Duration: \(duration)s"
+                        } else {
+                            return "Duration: —"
+                        }
+                    }()
+
+                    self.statsLabel.text = [tokensLine, costLine, durationLine].joined(separator: "\n")
+
                     self.scrollToBottom()
 
                 case .failure(let error):
                     self.outputTextView.text = "Error: \(error.localizedDescription)"
+                    self.statsLabel.text = "Tokens: —\nCost: —\nDuration: —"
                     self.scrollToBottom()
                 }
             }
         }
     }
 
+    private static func formatRub(_ value: Double) -> String? {
+        let nf = NumberFormatter()
+        nf.numberStyle = .currency
+        nf.currencySymbol = "₽"
+        nf.maximumFractionDigits = 4
+        nf.minimumFractionDigits = 0
+        nf.locale = Locale(identifier: "ru_RU")
+        return nf.string(from: NSNumber(value: value))
+    }
+
     private func setLoading(_ loading: Bool) {
         sendButton.isEnabled = !loading
         inputTextView.isEditable = !loading
-        modelSegmentedControl.isEnabled = !loading     // ✅ NEW
-        temperatureTextField.isEnabled = !loading      // ✅ NEW
+        modelSegmentedControl.isEnabled = !loading
+        temperatureTextField.isEnabled = !loading
         loading ? activity.startAnimating() : activity.stopAnimating()
     }
 
     private func scrollToBottom() {
-        // важно: заставляем автолэйаут пересчитать высоты ДО измерения contentSize
         view.layoutIfNeeded()
         scrollView.layoutIfNeeded()
 

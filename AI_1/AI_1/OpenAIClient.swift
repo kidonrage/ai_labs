@@ -10,7 +10,31 @@ import Foundation
 // MARK: - Model (DTOs)
 
 struct OpenAIResponseDTO: Decodable {
+    let createdAt: Int?
+    let completedAt: Int?
+    let model: String?
+    let usage: UsageDTO?
     let output: [OutputItemDTO]?
+
+    enum CodingKeys: String, CodingKey {
+        case createdAt = "created_at"
+        case completedAt = "completed_at"
+        case model
+        case usage
+        case output
+    }
+}
+
+struct UsageDTO: Decodable {
+    let inputTokens: Int?
+    let outputTokens: Int?
+    let totalTokens: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case inputTokens = "input_tokens"
+        case outputTokens = "output_tokens"
+        case totalTokens = "total_tokens"
+    }
 }
 
 struct OutputItemDTO: Decodable {
@@ -32,9 +56,53 @@ struct OpenAIRequestBody: Encodable {
     let temperature: Float
 }
 
+// MARK: - Model (Result for VC)
+
+struct OpenAIChatUsage {
+    let inputTokens: Int
+    let outputTokens: Int
+    let totalTokens: Int
+}
+
+struct OpenAIChatResponse {
+    let answer: String
+    let model: String?
+    let usage: OpenAIChatUsage?
+    let durationSeconds: Int?
+    let costRub: Double?
+}
+
+// MARK: - Model (Pricing)
+
+enum OpenAIModelPricing {
+    // ₽ per 1M tokens
+    static let rates: [String: (input: Double, output: Double)] = [
+        "gpt-5.2": (input: 531.0, output: 4245.0),
+        "gpt-4.1": (input: 516.0, output: 2062.0),
+        "gpt-3.5-turbo": (input: 129.0, output: 387.0)
+    ]
+
+    static func key(for model: String?) -> String? {
+        guard let model else { return nil }
+        // match by prefix, so "gpt-4.1-xxxx" тоже сработает
+        if model.hasPrefix("gpt-5.2") { return "gpt-5.2" }
+        if model.hasPrefix("gpt-4.1") { return "gpt-4.1" }
+        if model.hasPrefix("gpt-3.5-turbo") { return "gpt-3.5-turbo" }
+        return nil
+    }
+
+    static func costRub(model: String?, inputTokens: Int, outputTokens: Int) -> Double? {
+        guard let k = key(for: model), let r = rates[k] else { return nil }
+        let inCost = (Double(inputTokens) / 1_000_000.0) * r.input
+        let outCost = (Double(outputTokens) / 1_000_000.0) * r.output
+        return inCost + outCost
+    }
+}
+
 // MARK: - Model (API Client)
 
 final class OpenAIClient {
+
     enum ClientError: Error, LocalizedError {
         case invalidURL
         case badStatusCode(Int)
@@ -59,7 +127,12 @@ final class OpenAIClient {
         self.session = session
     }
 
-    func sendText(_ text: String, model: String, temperature: Float, completion: @escaping (Result<String, Error>) -> Void) {
+    func sendText(
+        _ text: String,
+        model: String,
+        temperature: Float,
+        completion: @escaping (Result<OpenAIChatResponse, Error>) -> Void
+    ) {
         let endpoint = baseURL.appendingPathComponent("openai/v1/responses")
 
         var request = URLRequest(url: endpoint)
@@ -99,11 +172,44 @@ final class OpenAIClient {
 
             do {
                 let decoded = try JSONDecoder().decode(OpenAIResponseDTO.self, from: data)
-                if let text = Self.extractAnswerText(from: decoded) {
-                    completion(.success(text))
-                } else {
+
+                guard let answerText = Self.extractAnswerText(from: decoded) else {
                     completion(.failure(ClientError.emptyAnswer))
+                    return
                 }
+
+                let usage: OpenAIChatUsage? = {
+                    guard
+                        let u = decoded.usage,
+                        let inTok = u.inputTokens,
+                        let outTok = u.outputTokens,
+                        let totalTok = u.totalTokens
+                    else { return nil }
+                    return OpenAIChatUsage(inputTokens: inTok, outputTokens: outTok, totalTokens: totalTok)
+                }()
+
+                let durationSeconds: Int? = {
+                    guard let c = decoded.createdAt, let d = decoded.completedAt else { return nil }
+                    return d - c
+                }()
+
+                let costRub: Double? = {
+                    guard let usage else { return nil }
+                    // ВАЖНО: считаем по имени модели из ответа, если оно есть.
+                    // Если вдруг API вернёт nil model, можно fallback'нуться на "model" из запроса.
+                    let modelName = decoded.model ?? model
+                    return OpenAIModelPricing.costRub(model: modelName, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens)
+                }()
+
+                let result = OpenAIChatResponse(
+                    answer: answerText,
+                    model: decoded.model ?? model,
+                    usage: usage,
+                    durationSeconds: durationSeconds,
+                    costRub: costRub
+                )
+
+                completion(.success(result))
             } catch {
                 completion(.failure(error))
             }
@@ -115,12 +221,10 @@ final class OpenAIClient {
     private static func extractAnswerText(from dto: OpenAIResponseDTO) -> String? {
         guard let output = dto.output else { return nil }
 
-        // Find assistant message
         let assistantItem = output.first { item in
             (item.type == "message") && (item.role == "assistant")
         }
 
-        // Find output_text in its content
         let answer = assistantItem?.content?.first { $0.type == "output_text" }?.text
         return answer?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
