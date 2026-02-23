@@ -7,125 +7,6 @@
 
 import UIKit
 
-// MARK: - Model (DTOs)
-
-struct OpenAIResponseDTO: Decodable {
-    let output: [OutputItemDTO]?
-}
-
-struct OutputItemDTO: Decodable {
-    let type: String?
-    let role: String?
-    let content: [ContentItemDTO]?
-}
-
-struct ContentItemDTO: Decodable {
-    let type: String?
-    let text: String?
-}
-
-// MARK: - Model (Request)
-
-struct OpenAIRequestBody: Encodable {
-    let model: String
-    let input: String
-    let temperature: Float
-}
-
-// MARK: - Model (API Client)
-
-final class OpenAIClient {
-    enum ClientError: Error, LocalizedError {
-        case invalidURL
-        case badStatusCode(Int)
-        case emptyAnswer
-
-        var errorDescription: String? {
-            switch self {
-            case .invalidURL: return "Invalid API URL."
-            case .badStatusCode(let code): return "Server returned status code \(code)."
-            case .emptyAnswer: return "No answer text found in response."
-            }
-        }
-    }
-
-    private let baseURL: URL
-    private let apiKey: String
-    private let session: URLSession
-
-    init(baseURL: URL, apiKey: String, session: URLSession = .shared) {
-        self.baseURL = baseURL
-        self.apiKey = apiKey
-        self.session = session
-    }
-
-    func sendText(_ text: String, model: String = "gpt-4o", temperature: Float, completion: @escaping (Result<String, Error>) -> Void) {
-        let endpoint = baseURL.appendingPathComponent("openai/v1/responses")
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
-        let body = OpenAIRequestBody(model: model, input: text, temperature: temperature)
-
-        do {
-            request.httpBody = try JSONEncoder().encode(body)
-        } catch {
-            completion(.failure(error))
-            return
-        }
-
-        session.dataTask(with: request) { data, response, error in
-            if let error {
-                completion(.failure(error))
-                return
-            }
-
-            guard let http = response as? HTTPURLResponse else {
-                completion(.failure(URLError(.badServerResponse)))
-                return
-            }
-
-            guard (200...299).contains(http.statusCode) else {
-                completion(.failure(ClientError.badStatusCode(http.statusCode)))
-                return
-            }
-
-            guard let data else {
-                completion(.failure(URLError(.zeroByteResource)))
-                return
-            }
-
-            do {
-                let decoded = try JSONDecoder().decode(OpenAIResponseDTO.self, from: data)
-                if let text = Self.extractAnswerText(from: decoded) {
-                    completion(.success(text))
-                } else {
-                    completion(.failure(ClientError.emptyAnswer))
-                }
-            } catch {
-                completion(.failure(error))
-            }
-        }.resume()
-    }
-
-    /// Extracts ONLY the assistant's answer text from the response:
-    /// output[] -> first item where role == "assistant" -> content[] -> first where type == "output_text" -> text
-    private static func extractAnswerText(from dto: OpenAIResponseDTO) -> String? {
-        guard let output = dto.output else { return nil }
-
-        // Find assistant message
-        let assistantItem = output.first { item in
-            (item.type == "message") && (item.role == "assistant")
-        }
-
-        // Find output_text in its content
-        let answer = assistantItem?.content?.first { $0.type == "output_text" }?.text
-        return answer?.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-}
-
 // MARK: - Controller (MVC)
 
 import UIKit
@@ -161,7 +42,14 @@ final class ChatViewController: UIViewController {
         return tv
     }()
 
-    // ✅ NEW: temperature
+    private let modelSegmentedControl: UISegmentedControl = {
+        let items = ["gpt-5.2", "gpt-4.1", "gpt-3.5-turbo"]
+        let sc = UISegmentedControl(items: items)
+        sc.selectedSegmentIndex = 0 // default: gpt-5.2
+        sc.translatesAutoresizingMaskIntoConstraints = false
+        return sc
+    }()
+
     private let temperatureTextField: UITextField = {
         let tf = UITextField()
         tf.placeholder = "temperature (0.0 - 2.0)"
@@ -189,7 +77,6 @@ final class ChatViewController: UIViewController {
         return a
     }()
 
-    /// ✅ Лучше чем UILabel для больших текстов
     private let outputTextView: UITextView = {
         let tv = UITextView()
         tv.isEditable = false
@@ -232,14 +119,15 @@ final class ChatViewController: UIViewController {
         view.addGestureRecognizer(tap)
     }
 
-    // MARK: Layout (✅ правильный scroll layout)
+    // MARK: Layout
 
     private func setupLayout() {
         view.addSubview(scrollView)
         scrollView.addSubview(stackView)
 
         stackView.addArrangedSubview(inputTextView)
-        stackView.addArrangedSubview(temperatureTextField) // ✅ NEW
+        stackView.addArrangedSubview(modelSegmentedControl)
+        stackView.addArrangedSubview(temperatureTextField)
         stackView.addArrangedSubview(sendButton)
         stackView.addArrangedSubview(activity)
         stackView.addArrangedSubview(outputTextView)
@@ -261,7 +149,8 @@ final class ChatViewController: UIViewController {
             stackView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32),
 
             inputTextView.heightAnchor.constraint(equalToConstant: 200),
-            temperatureTextField.heightAnchor.constraint(equalToConstant: 44), // ✅ NEW
+            modelSegmentedControl.heightAnchor.constraint(equalToConstant: 34),
+            temperatureTextField.heightAnchor.constraint(equalToConstant: 44),
             sendButton.heightAnchor.constraint(equalToConstant: 44),
         ])
     }
@@ -277,7 +166,15 @@ final class ChatViewController: UIViewController {
             return
         }
 
-        // ✅ NEW: validate temperature as string Float in 0.0...2.0
+        let model: String = {
+            switch modelSegmentedControl.selectedSegmentIndex {
+            case 0: return "gpt-5.2"
+            case 1: return "gpt-4.1"
+            case 2: return "gpt-3.5-turbo"
+            default: return "gpt-5.2"
+            }
+        }()
+
         let temperatureString = (temperatureTextField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Разрешим запятую, если юзер ввёл "0,7"
@@ -291,8 +188,7 @@ final class ChatViewController: UIViewController {
         setLoading(true)
         outputTextView.text = "Loading..."
 
-        // ✅ NEW: передаём temperature строкой
-        client.sendText(text, temperature: temp) { [weak self] result in
+        client.sendText(text, model: model, temperature: temp) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.setLoading(false)
@@ -313,7 +209,8 @@ final class ChatViewController: UIViewController {
     private func setLoading(_ loading: Bool) {
         sendButton.isEnabled = !loading
         inputTextView.isEditable = !loading
-        temperatureTextField.isEnabled = !loading // ✅ NEW
+        modelSegmentedControl.isEnabled = !loading     // ✅ NEW
+        temperatureTextField.isEnabled = !loading      // ✅ NEW
         loading ? activity.startAnimating() : activity.stopAnimating()
     }
 
