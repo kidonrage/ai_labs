@@ -1,5 +1,5 @@
 // =====================
-// Pricing (₽ per 1M tokens) — как в твоём Swift примере
+// Pricing (₽ per 1M tokens)
 // =====================
 const OpenAIModelPricing = {
   rates: {
@@ -25,11 +25,37 @@ const OpenAIModelPricing = {
 };
 
 // =====================
-// Agent — отдельная сущность. Инкапсулирует:
-// - историю
-// - подготовку контекста
-// - запрос/ответ
-// - парсинг, метрики, стоимость
+// Persistent Storage (JSON in localStorage)
+// =====================
+const STORAGE_KEY = "simple_agent_chat_v1";
+
+function safeJsonParse(s) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function loadState() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return null;
+  const obj = safeJsonParse(raw);
+  if (!obj || typeof obj !== "object") return null;
+  return obj;
+}
+
+function saveState(stateObj) {
+  // stateObj -> JSON "file" in localStorage
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(stateObj, null, 2));
+}
+
+function clearState() {
+  localStorage.removeItem(STORAGE_KEY);
+}
+
+// =====================
+// Agent — отдельная сущность + persistence hooks
 // =====================
 class Agent {
   constructor({ baseUrl, apiKey, model, temperature }) {
@@ -37,10 +63,14 @@ class Agent {
     this.apiKey = apiKey;
     this.model = model;
     this.temperature = temperature;
+
     this.history = []; // { role: "user"|"assistant", text: "..." }
-    // небольшой системный пролог (можно убрать)
+
     this.systemPreamble =
       "Ты полезный ассистент. Отвечай кратко и по делу, если не просят иначе.";
+
+    // callback, который UI может установить, чтобы реагировать на изменения (сохранять)
+    this.onStateChanged = null;
   }
 
   setConfig({ baseUrl, apiKey, model, temperature }) {
@@ -48,16 +78,71 @@ class Agent {
     this.apiKey = apiKey;
     this.model = model;
     this.temperature = temperature;
+    this._emitStateChanged();
   }
 
   reset() {
     this.history = [];
+    this._emitStateChanged();
   }
 
-  // Формируем контекст: system + вся история + новое сообщение
+  exportState() {
+    return {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      config: {
+        baseUrl: this.baseUrl,
+        // ключ обычно НЕ сохраняют. Но пользователь просил "между запусками".
+        // Сохранять его в localStorage небезопасно, поэтому по умолчанию НЕ сохраняем.
+        // Если хочешь — можно включить вручную в UI.
+        apiKey: null,
+        model: this.model,
+        temperature: this.temperature,
+      },
+      systemPreamble: this.systemPreamble,
+      history: this.history,
+    };
+  }
+
+  importState(state) {
+    if (!state || typeof state !== "object") return;
+
+    if (typeof state.systemPreamble === "string") {
+      this.systemPreamble = state.systemPreamble;
+    }
+
+    if (state.config && typeof state.config === "object") {
+      if (typeof state.config.baseUrl === "string")
+        this.baseUrl = state.config.baseUrl;
+      if (typeof state.config.model === "string")
+        this.model = state.config.model;
+      if (typeof state.config.temperature === "number")
+        this.temperature = state.config.temperature;
+      // apiKey намеренно не подхватываем автоматически (безопасность)
+    }
+
+    if (Array.isArray(state.history)) {
+      // минимальная валидация
+      this.history = state.history
+        .filter(
+          (m) =>
+            m &&
+            (m.role === "user" || m.role === "assistant") &&
+            typeof m.text === "string",
+        )
+        .map((m) => ({ role: m.role, text: m.text }));
+    }
+
+    this._emitStateChanged();
+  }
+
+  _emitStateChanged() {
+    if (typeof this.onStateChanged === "function") {
+      this.onStateChanged(this.exportState());
+    }
+  }
+
   buildContextInput(nextUserText) {
-    // Простой сериализованный контекст строкой.
-    // (В реальных SDK обычно передают массив сообщений, но тут сделаем минимально.)
     const lines = [];
     lines.push(`SYSTEM: ${this.systemPreamble}`);
     for (const m of this.history) {
@@ -74,11 +159,11 @@ class Agent {
 
     const input = this.buildContextInput(userText);
 
-    // Сохраняем пользовательское сообщение в историю сразу (агент — владелец состояния)
+    // добавляем user в историю и сохраняем
     this.history.push({ role: "user", text: userText });
+    this._emitStateChanged();
 
     const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
-
     const body = {
       model: this.model,
       input,
@@ -100,11 +185,9 @@ class Agent {
     }
 
     const dto = await resp.json();
-
     const answerText = Agent.extractAnswerText(dto);
     if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
 
-    // usage
     const usage =
       dto.usage &&
       Number.isFinite(dto.usage.input_tokens) &&
@@ -117,13 +200,11 @@ class Agent {
           }
         : null;
 
-    // duration
     const durationSeconds =
       Number.isFinite(dto.created_at) && Number.isFinite(dto.completed_at)
         ? dto.completed_at - dto.created_at
         : null;
 
-    // cost
     const modelName = dto.model || this.model;
     const costRub = usage
       ? OpenAIModelPricing.costRub(
@@ -141,13 +222,13 @@ class Agent {
       costRub,
     };
 
-    // Сохраняем ответ ассистента в историю
+    // добавляем assistant в историю и сохраняем
     this.history.push({ role: "assistant", text: answerText });
+    this._emitStateChanged();
 
     return result;
   }
 
-  // output[] -> first item where role == "assistant" -> content[] -> first where type == "output_text" -> text
   static extractAnswerText(dto) {
     const output = Array.isArray(dto.output) ? dto.output : [];
     const assistantItem = output.find(
@@ -166,7 +247,7 @@ class Agent {
 }
 
 // =====================
-// UI helpers
+// UI
 // =====================
 const $ = (id) => document.getElementById(id);
 
@@ -236,6 +317,13 @@ function addMessage({ role, text, meta = {} }) {
   $("messages").scrollTop = $("messages").scrollHeight;
 }
 
+function renderHistory(history) {
+  $("messages").innerHTML = "";
+  for (const m of history) {
+    addMessage({ role: m.role, text: m.text });
+  }
+}
+
 function setBusy(isBusy) {
   $("send").disabled = isBusy;
   $("newChat").disabled = isBusy;
@@ -248,26 +336,66 @@ function setBusy(isBusy) {
 }
 
 // =====================
-// Boot
+// Boot + restore persisted context
 // =====================
 let agent = new Agent({
   baseUrl: $("baseUrl").value,
   apiKey: $("apiKey").value,
   model: $("model").value,
-  temperature: $("temperature").value,
+  temperature: Number($("temperature").value),
 });
 
-addMessage({
-  role: "assistant",
-  text: "Привет! Я простой агент. Напиши сообщение — я отправлю его в LLM и покажу ответ. Историю диалога я храню и добавляю в контекст.",
-});
+// агент будет сохранять состояние при любом изменении
+agent.onStateChanged = (state) => saveState(state);
+
+// восстановление истории/настроек
+const persisted = loadState();
+if (persisted) {
+  agent.importState(persisted);
+
+  // применим восстановленные настройки в UI
+  if (persisted.config) {
+    if (typeof persisted.config.baseUrl === "string")
+      $("baseUrl").value = persisted.config.baseUrl;
+    if (typeof persisted.config.model === "string")
+      $("model").value = persisted.config.model;
+    if (typeof persisted.config.temperature === "number")
+      $("temperature").value = String(persisted.config.temperature);
+  }
+
+  // отрендерим историю
+  if (Array.isArray(persisted.history) && persisted.history.length > 0) {
+    renderHistory(agent.history);
+  } else {
+    addMessage({
+      role: "assistant",
+      text: "История пуста. Начнём новый диалог.",
+    });
+  }
+
+  // API key не восстанавливаем автоматически (безопасность)
+  addMessage({
+    role: "assistant",
+    text:
+      "Я восстановил контекст из localStorage (JSON). " +
+      "Если ты перезагрузила страницу — история сохранена. " +
+      "Вставь API key (он не сохраняется) и продолжай.",
+  });
+} else {
+  addMessage({
+    role: "assistant",
+    text:
+      "Привет! Я простой агент. Я сохраняю контекст в localStorage как JSON, " +
+      "поэтому после перезагрузки страница продолжит диалог с прежней историей.",
+  });
+}
 
 function syncAgentConfig() {
   agent.setConfig({
     baseUrl: $("baseUrl").value.trim(),
     apiKey: $("apiKey").value.trim(),
     model: $("model").value,
-    temperature: $("temperature").value,
+    temperature: Number($("temperature").value),
   });
 }
 
@@ -283,7 +411,6 @@ async function handleSend() {
 
   setBusy(true);
 
-  // небольшой "typing" placeholder
   const typing = document.createElement("div");
   typing.className = "msg assistant";
   typing.innerHTML = `
@@ -310,6 +437,8 @@ async function handleSend() {
         costRub: result.costRub,
       },
     });
+
+    // агент уже сохранил state через onStateChanged
   } catch (err) {
     typing.remove();
     addMessage({
@@ -324,7 +453,6 @@ async function handleSend() {
 $("send").addEventListener("click", handleSend);
 
 $("input").addEventListener("keydown", (e) => {
-  // Enter — отправить, Shift+Enter — новая строка
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     handleSend();
@@ -333,14 +461,14 @@ $("input").addEventListener("keydown", (e) => {
 
 $("newChat").addEventListener("click", () => {
   agent.reset();
+  clearState(); // очищаем persisted JSON
   $("messages").innerHTML = "";
   addMessage({
     role: "assistant",
-    text: "Новый чат создан. История очищена — начнём заново.",
+    text: "Новый чат создан. История очищена (включая сохранённый JSON в localStorage).",
   });
 });
 
-// если меняют настройки — применяем перед следующим запросом
 ["baseUrl", "apiKey", "model", "temperature"].forEach((id) => {
   $(id).addEventListener("change", syncAgentConfig);
 });
