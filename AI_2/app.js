@@ -18,16 +18,24 @@ const OpenAIModelPricing = {
     const k = this.key(model);
     if (!k || !this.rates[k]) return null;
     const r = this.rates[k];
-    const inCost = (inputTokens / 1_000_000) * r.input;
-    const outCost = (outputTokens / 1_000_000) * r.output;
+    const inCost = (Number(inputTokens || 0) / 1_000_000) * r.input;
+    const outCost = (Number(outputTokens || 0) / 1_000_000) * r.output;
     return inCost + outCost;
+  },
+  costPartsRub(model, inputTokens, outputTokens) {
+    const k = this.key(model);
+    if (!k || !this.rates[k]) return null;
+    const r = this.rates[k];
+    const inCost = (Number(inputTokens || 0) / 1_000_000) * r.input;
+    const outCost = (Number(outputTokens || 0) / 1_000_000) * r.output;
+    return { inCost, outCost, total: inCost + outCost, key: k };
   },
 };
 
 // =====================
 // Persistent Storage (JSON in localStorage)
 // =====================
-const STORAGE_KEY = "simple_agent_chat_v1";
+const STORAGE_KEY = "simple_agent_chat_v2";
 
 function safeJsonParse(s) {
   try {
@@ -46,12 +54,52 @@ function loadState() {
 }
 
 function saveState(stateObj) {
-  // stateObj -> JSON "file" in localStorage
   localStorage.setItem(STORAGE_KEY, JSON.stringify(stateObj, null, 2));
 }
 
 function clearState() {
   localStorage.removeItem(STORAGE_KEY);
+}
+
+// =====================
+// Helpers: usage + totals
+// =====================
+function normalizeUsage(dto) {
+  const u = dto && dto.usage ? dto.usage : null;
+  const input = u && Number.isFinite(u.input_tokens) ? u.input_tokens : null;
+  const output = u && Number.isFinite(u.output_tokens) ? u.output_tokens : null;
+  const total = u && Number.isFinite(u.total_tokens) ? u.total_tokens : null;
+
+  if (input == null || output == null || total == null) return null;
+  return { inputTokens: input, outputTokens: output, totalTokens: total };
+}
+
+function computeHistoryTotals(history) {
+  // Суммируем usage по всем request'ам (мы сохраняем одинаковые request-метрики на user и assistant сообщение)
+  // Чтобы не удваивать — учитываем только user сообщения как "request anchor".
+  let reqIn = 0;
+  let reqOut = 0;
+  let reqTotal = 0;
+  let costRub = 0;
+
+  for (const m of history) {
+    if (m.role !== "user") continue;
+    if (Number.isFinite(m.requestInputTokens)) reqIn += m.requestInputTokens;
+    if (Number.isFinite(m.requestOutputTokens)) reqOut += m.requestOutputTokens;
+    if (Number.isFinite(m.requestTotalTokens)) reqTotal += m.requestTotalTokens;
+    if (Number.isFinite(m.costRub)) costRub += m.costRub;
+  }
+
+  return {
+    requestInputTokens: reqIn,
+    requestOutputTokens: reqOut,
+    requestTotalTokens: reqTotal,
+    costRub,
+  };
+}
+
+function round4(x) {
+  return Math.round(x * 10_000) / 10_000;
 }
 
 // =====================
@@ -64,12 +112,23 @@ class Agent {
     this.model = model;
     this.temperature = temperature;
 
-    this.history = []; // { role: "user"|"assistant", text: "..." }
+    // history item schema (v2):
+    // {
+    //   role: "user"|"assistant",
+    //   text: string,
+    //   at: ISO string,
+    //   model?: string,
+    //   requestInputTokens?: number,  // dto.usage.input_tokens (for this request)
+    //   requestOutputTokens?: number, // dto.usage.output_tokens (for this request)
+    //   requestTotalTokens?: number,  // dto.usage.total_tokens (for this request)
+    //   costRub?: number,             // total request cost (in+out) for this request
+    //   durationSeconds?: number|null
+    // }
+    this.history = [];
 
     this.systemPreamble =
       "Ты полезный ассистент. Отвечай кратко и по делу, если не просят иначе.";
 
-    // callback, который UI может установить, чтобы реагировать на изменения (сохранять)
     this.onStateChanged = null;
   }
 
@@ -88,14 +147,11 @@ class Agent {
 
   exportState() {
     return {
-      version: 1,
+      version: 2,
       savedAt: new Date().toISOString(),
       config: {
         baseUrl: this.baseUrl,
-        // ключ обычно НЕ сохраняют. Но пользователь просил "между запусками".
-        // Сохранять его в localStorage небезопасно, поэтому по умолчанию НЕ сохраняем.
-        // Если хочешь — можно включить вручную в UI.
-        apiKey: null,
+        apiKey: null, // intentionally not persisted
         model: this.model,
         temperature: this.temperature,
       },
@@ -118,11 +174,11 @@ class Agent {
         this.model = state.config.model;
       if (typeof state.config.temperature === "number")
         this.temperature = state.config.temperature;
-      // apiKey намеренно не подхватываем автоматически (безопасность)
+      // apiKey intentionally not restored
     }
 
     if (Array.isArray(state.history)) {
-      // минимальная валидация
+      // Accept v1 and v2. v1: {role,text}. v2: extended.
       this.history = state.history
         .filter(
           (m) =>
@@ -130,7 +186,25 @@ class Agent {
             (m.role === "user" || m.role === "assistant") &&
             typeof m.text === "string",
         )
-        .map((m) => ({ role: m.role, text: m.text }));
+        .map((m) => ({
+          role: m.role,
+          text: m.text,
+          at: typeof m.at === "string" ? m.at : new Date().toISOString(),
+          model: typeof m.model === "string" ? m.model : undefined,
+          requestInputTokens: Number.isFinite(m.requestInputTokens)
+            ? m.requestInputTokens
+            : undefined,
+          requestOutputTokens: Number.isFinite(m.requestOutputTokens)
+            ? m.requestOutputTokens
+            : undefined,
+          requestTotalTokens: Number.isFinite(m.requestTotalTokens)
+            ? m.requestTotalTokens
+            : undefined,
+          costRub: Number.isFinite(m.costRub) ? m.costRub : undefined,
+          durationSeconds: Number.isFinite(m.durationSeconds)
+            ? m.durationSeconds
+            : undefined,
+        }));
     }
 
     this._emitStateChanged();
@@ -159,8 +233,13 @@ class Agent {
 
     const input = this.buildContextInput(userText);
 
-    // добавляем user в историю и сохраняем
-    this.history.push({ role: "user", text: userText });
+    // 1) add user message to history
+    const userMsg = {
+      role: "user",
+      text: userText,
+      at: new Date().toISOString(),
+    };
+    this.history.push(userMsg);
     this._emitStateChanged();
 
     const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
@@ -185,20 +264,11 @@ class Agent {
     }
 
     const dto = await resp.json();
+
     const answerText = Agent.extractAnswerText(dto);
     if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
 
-    const usage =
-      dto.usage &&
-      Number.isFinite(dto.usage.input_tokens) &&
-      Number.isFinite(dto.usage.output_tokens) &&
-      Number.isFinite(dto.usage.total_tokens)
-        ? {
-            inputTokens: dto.usage.input_tokens,
-            outputTokens: dto.usage.output_tokens,
-            totalTokens: dto.usage.total_tokens,
-          }
-        : null;
+    const usage = normalizeUsage(dto);
 
     const durationSeconds =
       Number.isFinite(dto.created_at) && Number.isFinite(dto.completed_at)
@@ -206,6 +276,7 @@ class Agent {
         : null;
 
     const modelName = dto.model || this.model;
+
     const costRub = usage
       ? OpenAIModelPricing.costRub(
           modelName,
@@ -214,19 +285,41 @@ class Agent {
         )
       : null;
 
-    const result = {
+    // 2) attach request stats to BOTH messages of this turn (user + assistant),
+    // so UI can show per-message info without looking back.
+    if (usage) {
+      userMsg.model = modelName;
+      userMsg.requestInputTokens = usage.inputTokens; // токены текущего запроса
+      userMsg.requestOutputTokens = usage.outputTokens; // токены ответа в рамках этого же запроса (для общей суммы)
+      userMsg.requestTotalTokens = usage.totalTokens;
+      userMsg.costRub = costRub != null ? costRub : undefined;
+      userMsg.durationSeconds =
+        durationSeconds != null ? durationSeconds : undefined;
+    }
+
+    const assistantMsg = {
+      role: "assistant",
+      text: answerText,
+      at: new Date().toISOString(),
+      model: modelName,
+      requestInputTokens: usage ? usage.inputTokens : undefined,
+      requestOutputTokens: usage ? usage.outputTokens : undefined,
+      requestTotalTokens: usage ? usage.totalTokens : undefined,
+      costRub: costRub != null ? costRub : undefined,
+      durationSeconds: durationSeconds != null ? durationSeconds : undefined,
+    };
+
+    // 3) push assistant message
+    this.history.push(assistantMsg);
+    this._emitStateChanged();
+
+    return {
       answer: answerText,
       model: modelName,
       usage,
       durationSeconds,
       costRub,
     };
-
-    // добавляем assistant в историю и сохраняем
-    this.history.push({ role: "assistant", text: answerText });
-    this._emitStateChanged();
-
-    return result;
   }
 
   static extractAnswerText(dto) {
@@ -251,11 +344,95 @@ class Agent {
 // =====================
 const $ = (id) => document.getElementById(id);
 
+function formatTimeFromISO(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return formatTime();
+  }
+}
+
 function formatTime(d = new Date()) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function addMessage({ role, text, meta = {} }) {
+function formatCost(x) {
+  if (!Number.isFinite(x)) return null;
+  return `${round4(x).toFixed(4)} ₽`;
+}
+
+function messageStatsLines(message, historyTotals) {
+  const lines = [];
+
+  const model = message.model;
+  const hasUsage =
+    Number.isFinite(message.requestInputTokens) &&
+    Number.isFinite(message.requestOutputTokens);
+
+  // Per-message: tokens/cost
+  if (hasUsage) {
+    const inTok = message.requestInputTokens;
+    const outTok = message.requestOutputTokens;
+    const totalTok = Number.isFinite(message.requestTotalTokens)
+      ? message.requestTotalTokens
+      : inTok + outTok;
+
+    if (message.role === "user") {
+      // "для текущего запроса" — это input_tokens
+      const perMsgCost = OpenAIModelPricing.costPartsRub(model || "", inTok, 0);
+      const c = perMsgCost ? perMsgCost.inCost : null;
+
+      lines.push(
+        `request tokens: in ${inTok}, out ${outTok}, total ${totalTok}`,
+      );
+      if (model) lines.push(`model: ${model}`);
+      if (c != null)
+        lines.push(`this message cost: ${formatCost(c)} (input only)`);
+    } else {
+      // assistant message cost is output part
+      const perMsgCost = OpenAIModelPricing.costPartsRub(
+        model || "",
+        0,
+        outTok,
+      );
+      const c = perMsgCost ? perMsgCost.outCost : null;
+
+      lines.push(
+        `request tokens: in ${inTok}, out ${outTok}, total ${totalTok}`,
+      );
+      if (model) lines.push(`model: ${model}`);
+      if (c != null)
+        lines.push(`this message cost: ${formatCost(c)} (output only)`);
+    }
+
+    // optional duration
+    if (message.durationSeconds != null) {
+      lines.push(`duration: ${message.durationSeconds}s`);
+    }
+
+    // History totals (global)
+    if (historyTotals) {
+      lines.push(
+        `history total: in ${historyTotals.requestInputTokens}, out ${historyTotals.requestOutputTokens}, total ${historyTotals.requestTotalTokens}`,
+      );
+      lines.push(`history cost: ${formatCost(historyTotals.costRub)}`);
+    }
+  } else {
+    // No usage available (e.g., restored old history without usage)
+    if (model) lines.push(`model: ${model}`);
+    if (historyTotals) {
+      lines.push(
+        `history total: in ${historyTotals.requestInputTokens}, out ${historyTotals.requestOutputTokens}, total ${historyTotals.requestTotalTokens}`,
+      );
+      lines.push(`history cost: ${formatCost(historyTotals.costRub)}`);
+    }
+  }
+
+  return lines;
+}
+
+function addMessage({ role, text, meta = {} }, historyTotals = null) {
   const wrap = document.createElement("div");
   wrap.className = "msg " + role;
 
@@ -272,44 +449,24 @@ function addMessage({ role, text, meta = {} }) {
   time.textContent = meta.time || formatTime();
   metaRow.appendChild(time);
 
+  wrap.appendChild(metaRow);
+
   const textDiv = document.createElement("div");
   textDiv.className = "text";
   textDiv.textContent = text;
-
-  wrap.appendChild(metaRow);
   wrap.appendChild(textDiv);
 
-  if (
-    role === "assistant" &&
-    (meta.model ||
-      meta.usage ||
-      meta.durationSeconds != null ||
-      meta.costRub != null)
-  ) {
+  // Stats
+  const statsLines = meta.statsLines || [];
+  if (statsLines.length > 0) {
     const stats = document.createElement("div");
     stats.className = "stats";
 
-    if (meta.model) {
+    for (const line of statsLines) {
       const el = document.createElement("span");
-      el.textContent = `model: ${meta.model}`;
+      el.textContent = line;
       stats.appendChild(el);
     }
-    if (meta.usage) {
-      const el = document.createElement("span");
-      el.textContent = `tokens: in ${meta.usage.inputTokens}, out ${meta.usage.outputTokens}, total ${meta.usage.totalTokens}`;
-      stats.appendChild(el);
-    }
-    if (meta.durationSeconds != null) {
-      const el = document.createElement("span");
-      el.textContent = `duration: ${meta.durationSeconds}s`;
-      stats.appendChild(el);
-    }
-    if (meta.costRub != null) {
-      const el = document.createElement("span");
-      el.textContent = `cost: ${meta.costRub.toFixed(4)} ₽`;
-      stats.appendChild(el);
-    }
-
     wrap.appendChild(stats);
   }
 
@@ -319,9 +476,39 @@ function addMessage({ role, text, meta = {} }) {
 
 function renderHistory(history) {
   $("messages").innerHTML = "";
+
+  const totals = computeHistoryTotals(history);
+
   for (const m of history) {
-    addMessage({ role: m.role, text: m.text });
+    const time = m.at ? formatTimeFromISO(m.at) : formatTime();
+    const statsLines = messageStatsLines(m, totals);
+    addMessage(
+      { role: m.role, text: m.text, meta: { time, statsLines } },
+      totals,
+    );
   }
+
+  // Sticky footer total
+  renderTotalsBar(totals);
+}
+
+function renderTotalsBar(totals) {
+  const el = $("totals");
+  if (!el) return;
+
+  const hasAny =
+    totals &&
+    (totals.requestTotalTokens > 0 ||
+      (Number.isFinite(totals.costRub) && totals.costRub > 0));
+
+  if (!hasAny) {
+    el.textContent = "History totals: —";
+    return;
+  }
+
+  el.textContent =
+    `History totals — tokens: in ${totals.requestInputTokens}, out ${totals.requestOutputTokens}, total ${totals.requestTotalTokens} • ` +
+    `cost: ${formatCost(totals.costRub)}`;
 }
 
 function setBusy(isBusy) {
@@ -345,15 +532,20 @@ let agent = new Agent({
   temperature: Number($("temperature").value),
 });
 
-// агент будет сохранять состояние при любом изменении
-agent.onStateChanged = (state) => saveState(state);
+// agent persists on every change
+agent.onStateChanged = (state) => {
+  saveState(state);
+  // also re-render totals bar live (without fully re-rendering messages)
+  const totals = computeHistoryTotals(state.history || []);
+  renderTotalsBar(totals);
+};
 
-// восстановление истории/настроек
 const persisted = loadState();
+
 if (persisted) {
   agent.importState(persisted);
 
-  // применим восстановленные настройки в UI
+  // apply restored settings to UI
   if (persisted.config) {
     if (typeof persisted.config.baseUrl === "string")
       $("baseUrl").value = persisted.config.baseUrl;
@@ -363,23 +555,29 @@ if (persisted) {
       $("temperature").value = String(persisted.config.temperature);
   }
 
-  // отрендерим историю
-  if (Array.isArray(persisted.history) && persisted.history.length > 0) {
+  if (Array.isArray(agent.history) && agent.history.length > 0) {
     renderHistory(agent.history);
   } else {
     addMessage({
       role: "assistant",
       text: "История пуста. Начнём новый диалог.",
+      meta: { statsLines: [] },
+    });
+    renderTotalsBar({
+      requestInputTokens: 0,
+      requestOutputTokens: 0,
+      requestTotalTokens: 0,
+      costRub: 0,
     });
   }
 
-  // API key не восстанавливаем автоматически (безопасность)
   addMessage({
     role: "assistant",
     text:
       "Я восстановил контекст из localStorage (JSON). " +
       "Если ты перезагрузила страницу — история сохранена. " +
       "Вставь API key (он не сохраняется) и продолжай.",
+    meta: { statsLines: [] },
   });
 } else {
   addMessage({
@@ -387,6 +585,13 @@ if (persisted) {
     text:
       "Привет! Я простой агент. Я сохраняю контекст в localStorage как JSON, " +
       "поэтому после перезагрузки страница продолжит диалог с прежней историей.",
+    meta: { statsLines: [] },
+  });
+  renderTotalsBar({
+    requestInputTokens: 0,
+    requestOutputTokens: 0,
+    requestTotalTokens: 0,
+    costRub: 0,
   });
 }
 
@@ -405,12 +610,23 @@ async function handleSend() {
 
   syncAgentConfig();
 
-  addMessage({ role: "user", text });
+  // Optimistic render user message (no usage yet)
+  const optimisticUser = {
+    role: "user",
+    text,
+    at: new Date().toISOString(),
+  };
+  agent.history.push(optimisticUser);
+  agent._emitStateChanged();
+
+  renderHistory(agent.history);
+
   $("input").value = "";
   $("input").focus();
 
   setBusy(true);
 
+  // Typing placeholder
   const typing = document.createElement("div");
   typing.className = "msg assistant";
   typing.innerHTML = `
@@ -424,27 +640,37 @@ async function handleSend() {
   $("messages").scrollTop = $("messages").scrollHeight;
 
   try {
+    // Remove optimisticUser because agent.send will add "real" user message with stats
+    agent.history.pop();
+    agent._emitStateChanged();
+
     const result = await agent.send(text);
 
     typing.remove();
-    addMessage({
-      role: "assistant",
-      text: result.answer,
-      meta: {
-        model: result.model,
-        usage: result.usage,
-        durationSeconds: result.durationSeconds,
-        costRub: result.costRub,
-      },
-    });
-
-    // агент уже сохранил state через onStateChanged
+    renderHistory(agent.history);
   } catch (err) {
     typing.remove();
-    addMessage({
-      role: "assistant",
-      text: `Ошибка: ${err && err.message ? err.message : String(err)}`,
-    });
+
+    // If send failed, keep the optimistic user message in history (already there?) — we removed it before send.
+    // Let's add it back with no stats.
+    agent.history.push(optimisticUser);
+    agent._emitStateChanged();
+
+    const totals = computeHistoryTotals(agent.history);
+    addMessage(
+      {
+        role: "assistant",
+        text: `Ошибка: ${err && err.message ? err.message : String(err)}`,
+        meta: {
+          statsLines: messageStatsLines(
+            { role: "assistant", text: "", ...optimisticUser },
+            totals,
+          ),
+        },
+      },
+      totals,
+    );
+    renderTotalsBar(totals);
   } finally {
     setBusy(false);
   }
@@ -461,11 +687,18 @@ $("input").addEventListener("keydown", (e) => {
 
 $("newChat").addEventListener("click", () => {
   agent.reset();
-  clearState(); // очищаем persisted JSON
+  clearState();
   $("messages").innerHTML = "";
   addMessage({
     role: "assistant",
     text: "Новый чат создан. История очищена (включая сохранённый JSON в localStorage).",
+    meta: { statsLines: [] },
+  });
+  renderTotalsBar({
+    requestInputTokens: 0,
+    requestOutputTokens: 0,
+    requestTotalTokens: 0,
+    costRub: 0,
   });
 });
 
