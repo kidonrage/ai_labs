@@ -163,7 +163,6 @@ async function handleSend() {
       meta: {
         statsLines: messageStatsLines(
           { role: "assistant", text: "" },
-          globalTotals,
         ),
       },
     });

@@ -14,7 +14,7 @@ function formatCost(x) {
   return `${round4(x).toFixed(4)} ₽`;
 }
 
-export function messageStatsLines(message, globalTotals) {
+export function messageStatsLines(message) {
   const lines = [];
 
   const model = message.model;
@@ -60,27 +60,6 @@ export function messageStatsLines(message, globalTotals) {
     }
   } else {
     if (model) lines.push(`model: ${model}`);
-  }
-
-  // Global totals (history + summaries)
-  if (globalTotals) {
-    lines.push(
-      `history total: in ${globalTotals.requestInputTokens}, out ${globalTotals.requestOutputTokens}, total ${globalTotals.requestTotalTokens}`,
-    );
-    lines.push(`history cost: ${formatCost(globalTotals.costRub)}`);
-
-    const hasSummary =
-      (globalTotals.summaryRequests || 0) > 0 ||
-      (globalTotals.summaryTotalTokens || 0) > 0 ||
-      (globalTotals.summaryCostRub || 0) > 0;
-
-    if (hasSummary) {
-      lines.push(
-        `summary total: in ${globalTotals.summaryInputTokens}, out ${globalTotals.summaryOutputTokens}, total ${globalTotals.summaryTotalTokens} (${globalTotals.summaryRequests} req)`,
-      );
-      lines.push(`summary cost: ${formatCost(globalTotals.summaryCostRub)}`);
-      lines.push(`grand total cost: ${formatCost(globalTotals.totalCostRub)}`);
-    }
   }
 
   return lines;
@@ -170,7 +149,7 @@ export function renderHistory(history, summaryTotals) {
 
   for (const m of history) {
     const time = m.at ? formatTimeFromISO(m.at) : formatTime();
-    const statsLines = messageStatsLines(m, globalTotals);
+    const statsLines = messageStatsLines(m);
     addMessage({ role: m.role, text: m.text, meta: { time, statsLines } });
   }
 
