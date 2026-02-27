@@ -1,6 +1,6 @@
 import { Agent } from "./agent.js";
 import { loadState, saveState, clearState } from "./storage.js";
-import { computeHistoryTotals, formatTime } from "./helpers.js";
+import { computeHistoryTotals, mergeTotals, formatTime } from "./helpers.js";
 import {
   addMessage,
   renderHistory,
@@ -11,9 +11,7 @@ import {
 
 const $ = (id) => document.getElementById(id);
 
-// =====================
-// Boot + restore persisted context
-// =====================
+// Boot
 let agent = new Agent({
   baseUrl: $("baseUrl").value,
   apiKey: $("apiKey").value,
@@ -21,12 +19,16 @@ let agent = new Agent({
   temperature: Number($("temperature").value),
 });
 
-// agent persists on every change
+// persist on every change
 agent.onStateChanged = (state) => {
   saveState(state);
-  // also re-render totals bar live (without fully re-rendering messages)
-  const totals = computeHistoryTotals(state.history || []);
-  renderTotalsBar(totals);
+
+  const historyTotals = computeHistoryTotals(state.history || []);
+  const globalTotals = mergeTotals(
+    historyTotals,
+    state.summaryTotals || agent.summaryTotals,
+  );
+  renderTotalsBar(globalTotals);
 };
 
 const persisted = loadState();
@@ -34,7 +36,6 @@ const persisted = loadState();
 if (persisted) {
   agent.importState(persisted);
 
-  // apply restored settings to UI
   if (persisted.config) {
     if (typeof persisted.config.baseUrl === "string")
       $("baseUrl").value = persisted.config.baseUrl;
@@ -45,26 +46,30 @@ if (persisted) {
   }
 
   if (Array.isArray(agent.history) && agent.history.length > 0) {
-    renderHistory(agent.history);
+    renderHistory(agent.history, agent.summaryTotals);
   } else {
     addMessage({
       role: "assistant",
       text: "История пуста. Начнём новый диалог.",
       meta: { statsLines: [] },
     });
-    renderTotalsBar({
-      requestInputTokens: 0,
-      requestOutputTokens: 0,
-      requestTotalTokens: 0,
-      costRub: 0,
-    });
+    renderTotalsBar(
+      mergeTotals(
+        {
+          requestInputTokens: 0,
+          requestOutputTokens: 0,
+          requestTotalTokens: 0,
+          costRub: 0,
+        },
+        agent.summaryTotals,
+      ),
+    );
   }
 
   addMessage({
     role: "assistant",
     text:
       "Я восстановил контекст из localStorage (JSON). " +
-      "Если ты перезагрузила страницу — история сохранена. " +
       "Вставь API key (он не сохраняется) и продолжай.",
     meta: { statsLines: [] },
   });
@@ -76,12 +81,17 @@ if (persisted) {
       "поэтому после перезагрузки страница продолжит диалог с прежней историей.",
     meta: { statsLines: [] },
   });
-  renderTotalsBar({
-    requestInputTokens: 0,
-    requestOutputTokens: 0,
-    requestTotalTokens: 0,
-    costRub: 0,
-  });
+  renderTotalsBar(
+    mergeTotals(
+      {
+        requestInputTokens: 0,
+        requestOutputTokens: 0,
+        requestTotalTokens: 0,
+        costRub: 0,
+      },
+      agent.summaryTotals,
+    ),
+  );
 }
 
 function syncAgentConfig() {
@@ -99,7 +109,7 @@ async function handleSend() {
 
   syncAgentConfig();
 
-  // Optimistic render user message (no usage yet)
+  // Optimistic render
   const optimisticUser = {
     role: "user",
     text,
@@ -108,7 +118,7 @@ async function handleSend() {
   agent.history.push(optimisticUser);
   agent._emitStateChanged();
 
-  renderHistory(agent.history);
+  renderHistory(agent.history, agent.summaryTotals);
 
   $("input").value = "";
   $("input").focus();
@@ -129,37 +139,36 @@ async function handleSend() {
   $("messages").scrollTop = $("messages").scrollHeight;
 
   try {
-    // Remove optimisticUser because agent.send will add "real" user message with stats
+    // Remove optimistic
     agent.history.pop();
     agent._emitStateChanged();
 
     await agent.send(text);
 
     typing.remove();
-    renderHistory(agent.history);
+    renderHistory(agent.history, agent.summaryTotals);
   } catch (err) {
     typing.remove();
 
-    // If send failed, keep the optimistic user message in history (we removed it before send).
-    // Let's add it back with no stats.
+    // Restore optimistic message
     agent.history.push(optimisticUser);
     agent._emitStateChanged();
 
-    const totals = computeHistoryTotals(agent.history);
-    addMessage(
-      {
-        role: "assistant",
-        text: `Ошибка: ${err && err.message ? err.message : String(err)}`,
-        meta: {
-          statsLines: messageStatsLines(
-            { role: "assistant", text: "", ...optimisticUser },
-            totals,
-          ),
-        },
+    const historyTotals = computeHistoryTotals(agent.history);
+    const globalTotals = mergeTotals(historyTotals, agent.summaryTotals);
+
+    addMessage({
+      role: "assistant",
+      text: `Ошибка: ${err && err.message ? err.message : String(err)}`,
+      meta: {
+        statsLines: messageStatsLines(
+          { role: "assistant", text: "" },
+          globalTotals,
+        ),
       },
-      totals,
-    );
-    renderTotalsBar(totals);
+    });
+
+    renderTotalsBar(globalTotals);
   } finally {
     setBusy(false);
   }
@@ -183,12 +192,9 @@ $("newChat").addEventListener("click", () => {
     text: "Новый чат создан. История очищена (включая сохранённый JSON в localStorage).",
     meta: { statsLines: [] },
   });
-  renderTotalsBar({
-    requestInputTokens: 0,
-    requestOutputTokens: 0,
-    requestTotalTokens: 0,
-    costRub: 0,
-  });
+
+  const historyTotals = computeHistoryTotals(agent.history);
+  renderTotalsBar(mergeTotals(historyTotals, agent.summaryTotals));
 });
 
 ["baseUrl", "apiKey", "model", "temperature"].forEach((id) => {

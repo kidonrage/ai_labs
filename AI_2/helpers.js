@@ -1,3 +1,4 @@
+// /src/helpers.js
 export function normalizeUsage(dto) {
   const u = dto && dto.usage ? dto.usage : null;
   const input = u && Number.isFinite(u.input_tokens) ? u.input_tokens : null;
@@ -9,7 +10,7 @@ export function normalizeUsage(dto) {
 }
 
 export function computeHistoryTotals(history) {
-  // Суммируем usage по всем request'ам (мы сохраняем одинаковые request-метрики на user и assistant сообщение)
+  // Суммируем usage по всем request'ам.
   // Чтобы не удваивать — учитываем только user сообщения как "request anchor".
   let reqIn = 0;
   let reqOut = 0;
@@ -29,6 +30,34 @@ export function computeHistoryTotals(history) {
     requestOutputTokens: reqOut,
     requestTotalTokens: reqTotal,
     costRub,
+  };
+}
+
+export function mergeTotals(historyTotals, summaryTotals) {
+  const h = historyTotals || {
+    requestInputTokens: 0,
+    requestOutputTokens: 0,
+    requestTotalTokens: 0,
+    costRub: 0,
+  };
+
+  const s = summaryTotals || {
+    summaryInputTokens: 0,
+    summaryOutputTokens: 0,
+    summaryTotalTokens: 0,
+    summaryCostRub: 0,
+    summaryRequests: 0,
+  };
+
+  const totalCost = (Number(h.costRub) || 0) + (Number(s.summaryCostRub) || 0);
+  const totalTokens =
+    (Number(h.requestTotalTokens) || 0) + (Number(s.summaryTotalTokens) || 0);
+
+  return {
+    ...h,
+    ...s,
+    totalCostRub: totalCost,
+    totalTokens,
   };
 }
 

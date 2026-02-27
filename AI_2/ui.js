@@ -1,7 +1,7 @@
-// /src/ui.js
 import { OpenAIModelPricing } from "./pricing.js";
 import {
   computeHistoryTotals,
+  mergeTotals,
   round4,
   formatTime,
   formatTimeFromISO,
@@ -14,7 +14,7 @@ function formatCost(x) {
   return `${round4(x).toFixed(4)} ₽`;
 }
 
-export function messageStatsLines(message, historyTotals) {
+export function messageStatsLines(message, globalTotals) {
   const lines = [];
 
   const model = message.model;
@@ -22,7 +22,6 @@ export function messageStatsLines(message, historyTotals) {
     Number.isFinite(message.requestInputTokens) &&
     Number.isFinite(message.requestOutputTokens);
 
-  // Per-message: tokens/cost
   if (hasUsage) {
     const inTok = message.requestInputTokens;
     const outTok = message.requestOutputTokens;
@@ -31,7 +30,6 @@ export function messageStatsLines(message, historyTotals) {
       : inTok + outTok;
 
     if (message.role === "user") {
-      // "для текущего запроса" — это input_tokens
       const perMsgCost = OpenAIModelPricing.costPartsRub(model || "", inTok, 0);
       const c = perMsgCost ? perMsgCost.inCost : null;
 
@@ -42,7 +40,6 @@ export function messageStatsLines(message, historyTotals) {
       if (c != null)
         lines.push(`this message cost: ${formatCost(c)} (input only)`);
     } else {
-      // assistant message cost is output part
       const perMsgCost = OpenAIModelPricing.costPartsRub(
         model || "",
         0,
@@ -58,33 +55,38 @@ export function messageStatsLines(message, historyTotals) {
         lines.push(`this message cost: ${formatCost(c)} (output only)`);
     }
 
-    // optional duration
     if (message.durationSeconds != null) {
       lines.push(`duration: ${message.durationSeconds}s`);
     }
-
-    // History totals (global)
-    if (historyTotals) {
-      lines.push(
-        `history total: in ${historyTotals.requestInputTokens}, out ${historyTotals.requestOutputTokens}, total ${historyTotals.requestTotalTokens}`,
-      );
-      lines.push(`history cost: ${formatCost(historyTotals.costRub)}`);
-    }
   } else {
-    // No usage available (e.g., restored old history without usage)
     if (model) lines.push(`model: ${model}`);
-    if (historyTotals) {
+  }
+
+  // Global totals (history + summaries)
+  if (globalTotals) {
+    lines.push(
+      `history total: in ${globalTotals.requestInputTokens}, out ${globalTotals.requestOutputTokens}, total ${globalTotals.requestTotalTokens}`,
+    );
+    lines.push(`history cost: ${formatCost(globalTotals.costRub)}`);
+
+    const hasSummary =
+      (globalTotals.summaryRequests || 0) > 0 ||
+      (globalTotals.summaryTotalTokens || 0) > 0 ||
+      (globalTotals.summaryCostRub || 0) > 0;
+
+    if (hasSummary) {
       lines.push(
-        `history total: in ${historyTotals.requestInputTokens}, out ${historyTotals.requestOutputTokens}, total ${historyTotals.requestTotalTokens}`,
+        `summary total: in ${globalTotals.summaryInputTokens}, out ${globalTotals.summaryOutputTokens}, total ${globalTotals.summaryTotalTokens} (${globalTotals.summaryRequests} req)`,
       );
-      lines.push(`history cost: ${formatCost(historyTotals.costRub)}`);
+      lines.push(`summary cost: ${formatCost(globalTotals.summaryCostRub)}`);
+      lines.push(`grand total cost: ${formatCost(globalTotals.totalCostRub)}`);
     }
   }
 
   return lines;
 }
 
-export function addMessage({ role, text, meta = {} }, historyTotals = null) {
+export function addMessage({ role, text, meta = {} }) {
   const wrap = document.createElement("div");
   wrap.className = "msg " + role;
 
@@ -108,7 +110,6 @@ export function addMessage({ role, text, meta = {} }, historyTotals = null) {
   textDiv.textContent = text;
   wrap.appendChild(textDiv);
 
-  // Stats
   const statsLines = meta.statsLines || [];
   if (statsLines.length > 0) {
     const stats = document.createElement("div");
@@ -126,41 +127,54 @@ export function addMessage({ role, text, meta = {} }, historyTotals = null) {
   $("messages").scrollTop = $("messages").scrollHeight;
 }
 
-export function renderTotalsBar(totals) {
+export function renderTotalsBar(globalTotals) {
   const el = $("totals");
   if (!el) return;
 
   const hasAny =
-    totals &&
-    (totals.requestTotalTokens > 0 ||
-      (Number.isFinite(totals.costRub) && totals.costRub > 0));
+    globalTotals &&
+    (globalTotals.requestTotalTokens > 0 ||
+      globalTotals.summaryTotalTokens > 0 ||
+      (Number.isFinite(globalTotals.totalCostRub) &&
+        globalTotals.totalCostRub > 0));
 
   if (!hasAny) {
     el.textContent = "History totals: —";
     return;
   }
 
-  el.textContent =
-    `History totals — tokens: in ${totals.requestInputTokens}, out ${totals.requestOutputTokens}, total ${totals.requestTotalTokens} • ` +
-    `cost: ${formatCost(totals.costRub)}`;
+  const historyPart =
+    `History — tokens: ${globalTotals.requestTotalTokens} ` +
+    `(in ${globalTotals.requestInputTokens}, out ${globalTotals.requestOutputTokens}) • ` +
+    `cost: ${formatCost(globalTotals.costRub)}`;
+
+  const hasSummary =
+    (globalTotals.summaryRequests || 0) > 0 ||
+    (globalTotals.summaryTotalTokens || 0) > 0 ||
+    (globalTotals.summaryCostRub || 0) > 0;
+
+  const summaryPart = hasSummary
+    ? ` • Summary — tokens: ${globalTotals.summaryTotalTokens} (${globalTotals.summaryRequests} req) • cost: ${formatCost(
+        globalTotals.summaryCostRub,
+      )} • Total: ${formatCost(globalTotals.totalCostRub)}`
+    : "";
+
+  el.textContent = historyPart + summaryPart;
 }
 
-export function renderHistory(history) {
+export function renderHistory(history, summaryTotals) {
   $("messages").innerHTML = "";
 
-  const totals = computeHistoryTotals(history);
+  const historyTotals = computeHistoryTotals(history);
+  const globalTotals = mergeTotals(historyTotals, summaryTotals);
 
   for (const m of history) {
     const time = m.at ? formatTimeFromISO(m.at) : formatTime();
-    const statsLines = messageStatsLines(m, totals);
-    addMessage(
-      { role: m.role, text: m.text, meta: { time, statsLines } },
-      totals,
-    );
+    const statsLines = messageStatsLines(m, globalTotals);
+    addMessage({ role: m.role, text: m.text, meta: { time, statsLines } });
   }
 
-  // Sticky footer total
-  renderTotalsBar(totals);
+  renderTotalsBar(globalTotals);
 }
 
 export function setBusy(isBusy) {
