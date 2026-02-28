@@ -157,12 +157,22 @@ export function renderHistory(history, summaryTotals) {
 }
 
 export function setBusy(isBusy) {
-  $("send").disabled = isBusy;
-  $("newChat").disabled = isBusy;
-  $("input").disabled = isBusy;
-  $("model").disabled = isBusy;
-  $("temperature").disabled = isBusy;
-  $("baseUrl").disabled = isBusy;
-  $("apiKey").disabled = isBusy;
+  const ids = [
+    "send",
+    "newChat",
+    "deleteChat",
+    "chatSelect",
+    "input",
+    "model",
+    "temperature",
+    "baseUrl",
+    "apiKey",
+  ];
+
+  for (const id of ids) {
+    const el = $(id);
+    if (el) el.disabled = isBusy;
+  }
+
   $("send").textContent = isBusy ? "Sending…" : "Send";
 }

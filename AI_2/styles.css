@@ -52,7 +52,7 @@ body {
 
 .controls {
   display: grid;
-  grid-template-columns: 1.5fr 1.2fr 0.8fr 0.6fr auto;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 10px;
   align-items: end;
 }
@@ -151,9 +151,9 @@ body {
   padding-top: 8px;
   border-top: 1px dashed rgba(255,255,255,0.08);
 
-  font-size: 10.5px;              /* меньше */
+  font-size: 10.5px;
   line-height: 1.25;
-  color: rgba(255,255,255,0.45);  /* сильно приглушено */
+  color: rgba(255,255,255,0.45);
 
   display: flex;
   gap: 8px;
@@ -163,7 +163,6 @@ body {
   transition: opacity 0.2s ease;
 }
 
-/* слегка проявляется при наведении */
 .msg:hover .stats {
   opacity: 1;
   color: var(--muted);
@@ -193,7 +192,6 @@ body {
   color: var(--muted);
 }
 
-/* Большой удобный input */
 #input {
   grid-area: input;
   resize: vertical;
@@ -215,7 +213,6 @@ body {
   border-color: rgba(255,255,255,0.25);
 }
 
-/* Нормальная кнопка, не гигантская */
 #send {
   grid-area: send;
   height: 44px;
@@ -234,6 +231,7 @@ body {
   background: rgba(255,255,255,0.08);
   font-size: 14px;
   border-radius: 12px;
+  padding: 10px 12px;
 }
 
 .btn.primary {
@@ -245,6 +243,11 @@ body {
   color: var(--muted);
 }
 
+.btn.danger {
+  background: rgba(145, 33, 33, 0.28);
+  border-color: rgba(212, 78, 78, 0.35);
+}
+
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -252,18 +255,26 @@ body {
 
 /* ===================== RESPONSIVE ===================== */
 
-@media (max-width: 960px) {
+@media (max-width: 1100px) {
   .controls {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 760px) {
+  .controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .composer {
     grid-template-columns: 1fr;
     grid-template-areas:
       "totals"
       "input"
       "send";
+  }
+
+  #send {
+    min-width: 0;
   }
 }

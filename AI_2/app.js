@@ -1,5 +1,5 @@
 import { Agent } from "./agent.js";
-import { loadState, saveState, clearState } from "./storage.js";
+import { loadState, saveState } from "./storage.js";
 import { computeHistoryTotals, mergeTotals, formatTime } from "./helpers.js";
 import {
   addMessage,
@@ -11,90 +11,234 @@ import {
 
 const $ = (id) => document.getElementById(id);
 
-// Boot
-let agent = new Agent({
-  baseUrl: $("baseUrl").value,
-  apiKey: $("apiKey").value,
-  model: $("model").value,
-  temperature: Number($("temperature").value),
-});
+function makeChatId() {
+  return (crypto.randomUUID && crypto.randomUUID()) || `chat_${Date.now()}_${Math.random()}`;
+}
 
-// persist on every change
-agent.onStateChanged = (state) => {
-  saveState(state);
+function defaultTotals() {
+  return {
+    requestInputTokens: 0,
+    requestOutputTokens: 0,
+    requestTotalTokens: 0,
+    costRub: 0,
+  };
+}
 
-  const historyTotals = computeHistoryTotals(state.history || []);
-  const globalTotals = mergeTotals(
-    historyTotals,
-    state.summaryTotals || agent.summaryTotals,
-  );
-  renderTotalsBar(globalTotals);
-};
+function normalizeStore(raw, fallbackConfig) {
+  if (raw && Array.isArray(raw.chats) && typeof raw.activeChatId === "string") {
+    const chats = raw.chats
+      .filter((c) => c && typeof c.id === "string" && c.state)
+      .map((c) => ({
+        id: c.id,
+        title: typeof c.title === "string" && c.title.trim() ? c.title : "Чат",
+        createdAt: typeof c.createdAt === "string" ? c.createdAt : new Date().toISOString(),
+        updatedAt: typeof c.updatedAt === "string" ? c.updatedAt : new Date().toISOString(),
+        state: c.state,
+      }));
+
+    if (chats.length > 0) {
+      const hasActive = chats.some((c) => c.id === raw.activeChatId);
+      return {
+        version: 1,
+        activeChatId: hasActive ? raw.activeChatId : chats[0].id,
+        chats,
+      };
+    }
+  }
+
+  // migrate old single-chat state format
+  if (raw && typeof raw === "object" && Array.isArray(raw.history) && raw.config) {
+    return {
+      version: 1,
+      activeChatId: "chat_1",
+      chats: [
+        {
+          id: "chat_1",
+          title: "Чат 1",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          state: raw,
+        },
+      ],
+    };
+  }
+
+  const initialAgent = new Agent({
+    baseUrl: fallbackConfig.baseUrl,
+    apiKey: "",
+    model: fallbackConfig.model,
+    temperature: fallbackConfig.temperature,
+  });
+
+  return {
+    version: 1,
+    activeChatId: "chat_1",
+    chats: [
+      {
+        id: "chat_1",
+        title: "Чат 1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        state: initialAgent.exportState(),
+      },
+    ],
+  };
+}
+
+function nextChatTitle(chats) {
+  let maxNum = 0;
+  for (const c of chats) {
+    const m = /^Чат\s+(\d+)$/i.exec(c.title || "");
+    if (m) maxNum = Math.max(maxNum, Number(m[1]));
+  }
+  return `Чат ${maxNum + 1}`;
+}
 
 const persisted = loadState();
 
-if (persisted) {
-  agent.importState(persisted);
+const fallbackConfig = {
+  baseUrl: $("baseUrl").value,
+  model: $("model").value,
+  temperature: Number($("temperature").value),
+};
 
-  if (persisted.config) {
-    if (typeof persisted.config.baseUrl === "string")
-      $("baseUrl").value = persisted.config.baseUrl;
-    if (typeof persisted.config.model === "string")
-      $("model").value = persisted.config.model;
-    if (typeof persisted.config.temperature === "number")
-      $("temperature").value = String(persisted.config.temperature);
+let store = normalizeStore(persisted, fallbackConfig);
+let activeChatId = store.activeChatId;
+let agent = null;
+
+function persistStore() {
+  store.activeChatId = activeChatId;
+  saveState(store);
+}
+
+function getActiveChat() {
+  return store.chats.find((c) => c.id === activeChatId) || null;
+}
+
+function renderChatSelector() {
+  const select = $("chatSelect");
+  select.innerHTML = "";
+
+  for (const chat of store.chats) {
+    const opt = document.createElement("option");
+    opt.value = chat.id;
+    opt.textContent = chat.title;
+    select.appendChild(opt);
+  }
+
+  select.value = activeChatId;
+  $("deleteChat").disabled = store.chats.length <= 1;
+}
+
+function bindAgentToActiveChat() {
+  const chat = getActiveChat();
+  if (!chat) return;
+
+  const currentApiKey = $("apiKey").value.trim();
+  const chatConfig = (chat.state && chat.state.config) || {};
+
+  agent = new Agent({
+    baseUrl: typeof chatConfig.baseUrl === "string" ? chatConfig.baseUrl : fallbackConfig.baseUrl,
+    apiKey: currentApiKey,
+    model: typeof chatConfig.model === "string" ? chatConfig.model : fallbackConfig.model,
+    temperature: Number.isFinite(chatConfig.temperature)
+      ? chatConfig.temperature
+      : fallbackConfig.temperature,
+  });
+
+  agent.onStateChanged = (state) => {
+    chat.state = state;
+    chat.updatedAt = new Date().toISOString();
+    persistStore();
+
+    const historyTotals = computeHistoryTotals(state.history || []);
+    const globalTotals = mergeTotals(
+      historyTotals,
+      state.summaryTotals || agent.summaryTotals,
+    );
+    renderTotalsBar(globalTotals);
+  };
+
+  if (chat.state) {
+    agent.importState(chat.state);
+  }
+
+  if (chat.state && chat.state.config) {
+    if (typeof chat.state.config.baseUrl === "string") {
+      $("baseUrl").value = chat.state.config.baseUrl;
+    }
+    if (typeof chat.state.config.model === "string") {
+      $("model").value = chat.state.config.model;
+    }
+    if (typeof chat.state.config.temperature === "number") {
+      $("temperature").value = String(chat.state.config.temperature);
+    }
   }
 
   if (Array.isArray(agent.history) && agent.history.length > 0) {
     renderHistory(agent.history, agent.summaryTotals);
   } else {
+    $("messages").innerHTML = "";
     addMessage({
       role: "assistant",
-      text: "История пуста. Начнём новый диалог.",
+      text: "Чат пуст. Напиши первое сообщение.",
       meta: { statsLines: [] },
     });
-    renderTotalsBar(
-      mergeTotals(
-        {
-          requestInputTokens: 0,
-          requestOutputTokens: 0,
-          requestTotalTokens: 0,
-          costRub: 0,
-        },
-        agent.summaryTotals,
-      ),
-    );
+    renderTotalsBar(mergeTotals(defaultTotals(), agent.summaryTotals));
   }
+}
+
+function switchToChat(chatId) {
+  if (!store.chats.some((c) => c.id === chatId)) return;
+  activeChatId = chatId;
+  renderChatSelector();
+  bindAgentToActiveChat();
+  persistStore();
+}
+
+function createChat() {
+  const currentApiKey = $("apiKey").value.trim();
+  const chatId = makeChatId();
+
+  const newAgent = new Agent({
+    baseUrl: $("baseUrl").value.trim(),
+    apiKey: currentApiKey,
+    model: $("model").value,
+    temperature: Number($("temperature").value),
+  });
+
+  const chat = {
+    id: chatId,
+    title: nextChatTitle(store.chats),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    state: newAgent.exportState(),
+  };
+
+  store.chats.push(chat);
+  switchToChat(chatId);
 
   addMessage({
     role: "assistant",
-    text:
-      "Я восстановил контекст из localStorage (JSON). " +
-      "Вставь API key (он не сохраняется) и продолжай.",
+    text: "Новый независимый чат создан.",
     meta: { statsLines: [] },
   });
-} else {
-  addMessage({
-    role: "assistant",
-    text:
-      "Привет! Я простой агент. Я сохраняю контекст в localStorage как JSON, " +
-      "поэтому после перезагрузки страница продолжит диалог с прежней историей.",
-    meta: { statsLines: [] },
-  });
-  renderTotalsBar(
-    mergeTotals(
-      {
-        requestInputTokens: 0,
-        requestOutputTokens: 0,
-        requestTotalTokens: 0,
-        costRub: 0,
-      },
-      agent.summaryTotals,
-    ),
-  );
+}
+
+function deleteActiveChat() {
+  if (store.chats.length <= 1) return;
+
+  const idx = store.chats.findIndex((c) => c.id === activeChatId);
+  if (idx < 0) return;
+
+  store.chats.splice(idx, 1);
+  const next = store.chats[Math.max(0, idx - 1)] || store.chats[0];
+  activeChatId = next.id;
+  switchToChat(activeChatId);
 }
 
 function syncAgentConfig() {
+  if (!agent) return;
   agent.setConfig({
     baseUrl: $("baseUrl").value.trim(),
     apiKey: $("apiKey").value.trim(),
@@ -105,7 +249,7 @@ function syncAgentConfig() {
 
 async function handleSend() {
   const text = $("input").value;
-  if (!text.trim()) return;
+  if (!text.trim() || !agent) return;
 
   syncAgentConfig();
 
@@ -170,7 +314,28 @@ async function handleSend() {
     renderTotalsBar(globalTotals);
   } finally {
     setBusy(false);
+    renderChatSelector();
   }
+}
+
+// Boot
+renderChatSelector();
+bindAgentToActiveChat();
+
+if (persisted) {
+  addMessage({
+    role: "assistant",
+    text:
+      "Чаты восстановлены из localStorage. API key не сохраняется, его нужно вводить заново.",
+    meta: { statsLines: [] },
+  });
+} else {
+  addMessage({
+    role: "assistant",
+    text:
+      "Привет! Можно создавать несколько независимых чатов, переключаться между ними, и они сохраняются в localStorage.",
+    meta: { statsLines: [] },
+  });
 }
 
 $("send").addEventListener("click", handleSend);
@@ -183,17 +348,15 @@ $("input").addEventListener("keydown", (e) => {
 });
 
 $("newChat").addEventListener("click", () => {
-  agent.reset();
-  clearState();
-  $("messages").innerHTML = "";
-  addMessage({
-    role: "assistant",
-    text: "Новый чат создан. История очищена (включая сохранённый JSON в localStorage).",
-    meta: { statsLines: [] },
-  });
+  createChat();
+});
 
-  const historyTotals = computeHistoryTotals(agent.history);
-  renderTotalsBar(mergeTotals(historyTotals, agent.summaryTotals));
+$("deleteChat").addEventListener("click", () => {
+  deleteActiveChat();
+});
+
+$("chatSelect").addEventListener("change", (e) => {
+  switchToChat(e.target.value);
 });
 
 ["baseUrl", "apiKey", "model", "temperature"].forEach((id) => {
