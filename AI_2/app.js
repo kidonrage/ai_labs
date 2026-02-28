@@ -225,6 +225,26 @@ function createChat() {
   });
 }
 
+function renameActiveChat() {
+  const chat = getActiveChat();
+  if (!chat) return;
+
+  const nextTitleRaw = window.prompt("Новое имя чата:", chat.title || "");
+  if (nextTitleRaw == null) return;
+
+  const nextTitle = nextTitleRaw.trim();
+  if (!nextTitle) {
+    window.alert("Имя чата не может быть пустым.");
+    return;
+  }
+
+  const normalized = nextTitle.slice(0, 60);
+  chat.title = normalized;
+  chat.updatedAt = new Date().toISOString();
+  renderChatSelector();
+  persistStore();
+}
+
 function deleteActiveChat() {
   if (store.chats.length <= 1) return;
 
@@ -349,6 +369,10 @@ $("input").addEventListener("keydown", (e) => {
 
 $("newChat").addEventListener("click", () => {
   createChat();
+});
+
+$("renameChat").addEventListener("click", () => {
+  renameActiveChat();
 });
 
 $("deleteChat").addEventListener("click", () => {

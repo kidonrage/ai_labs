@@ -160,6 +160,7 @@ export function setBusy(isBusy) {
   const ids = [
     "send",
     "newChat",
+    "renameChat",
     "deleteChat",
     "chatSelect",
     "input",
