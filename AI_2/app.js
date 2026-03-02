@@ -10,6 +10,23 @@ import {
 } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
+const DEFAULT_CONTEXT_STRATEGY = "sticky_facts";
+const CONTEXT_STRATEGIES = new Set([
+  "sliding_window",
+  "sticky_facts",
+  "branching",
+]);
+
+function normalizeContextStrategy(value) {
+  return CONTEXT_STRATEGIES.has(value) ? value : DEFAULT_CONTEXT_STRATEGY;
+}
+
+function contextStrategyLabel(value) {
+  const strategy = normalizeContextStrategy(value);
+  if (strategy === "sliding_window") return "Sliding Window";
+  if (strategy === "branching") return "Branching (ветки диалога)";
+  return "Sticky Facts / Key-Value Memory";
+}
 
 function makeChatId() {
   return (crypto.randomUUID && crypto.randomUUID()) || `chat_${Date.now()}_${Math.random()}`;
@@ -31,6 +48,7 @@ function normalizeStore(raw, fallbackConfig) {
       .map((c) => ({
         id: c.id,
         title: typeof c.title === "string" && c.title.trim() ? c.title : "Чат",
+        contextStrategy: normalizeContextStrategy(c.contextStrategy),
         createdAt: typeof c.createdAt === "string" ? c.createdAt : new Date().toISOString(),
         updatedAt: typeof c.updatedAt === "string" ? c.updatedAt : new Date().toISOString(),
         state: c.state,
@@ -55,6 +73,7 @@ function normalizeStore(raw, fallbackConfig) {
         {
           id: "chat_1",
           title: "Чат 1",
+          contextStrategy: DEFAULT_CONTEXT_STRATEGY,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           state: raw,
@@ -77,6 +96,7 @@ function normalizeStore(raw, fallbackConfig) {
       {
         id: "chat_1",
         title: "Чат 1",
+        contextStrategy: DEFAULT_CONTEXT_STRATEGY,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         state: initialAgent.exportState(),
@@ -105,6 +125,7 @@ const fallbackConfig = {
 let store = normalizeStore(persisted, fallbackConfig);
 let activeChatId = store.activeChatId;
 let agent = null;
+let defaultNewChatStrategy = DEFAULT_CONTEXT_STRATEGY;
 
 function persistStore() {
   store.activeChatId = activeChatId;
@@ -133,6 +154,10 @@ function renderChatSelector() {
 function bindAgentToActiveChat() {
   const chat = getActiveChat();
   if (!chat) return;
+  const activeStrategyInput = $("activeChatContextStrategy");
+  if (activeStrategyInput) {
+    activeStrategyInput.value = contextStrategyLabel(chat.contextStrategy);
+  }
 
   const currentApiKey = $("apiKey").value.trim();
   const chatConfig = (chat.state && chat.state.config) || {};
@@ -196,9 +221,10 @@ function switchToChat(chatId) {
   persistStore();
 }
 
-function createChat() {
+function createChat(strategyValue) {
   const currentApiKey = $("apiKey").value.trim();
   const chatId = makeChatId();
+  const selectedStrategy = normalizeContextStrategy(strategyValue);
 
   const newAgent = new Agent({
     baseUrl: $("baseUrl").value.trim(),
@@ -210,6 +236,7 @@ function createChat() {
   const chat = {
     id: chatId,
     title: nextChatTitle(store.chats),
+    contextStrategy: selectedStrategy,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     state: newAgent.exportState(),
@@ -220,8 +247,40 @@ function createChat() {
 
   addMessage({
     role: "assistant",
-    text: "Новый независимый чат создан.",
+    text: `Новый независимый чат создан. Стратегия: ${contextStrategyLabel(selectedStrategy)}.`,
     meta: { statsLines: [] },
+  });
+}
+
+function chooseNewChatStrategy() {
+  const dialog = $("newChatDialog");
+  const select = $("newChatDialogStrategy");
+  const cancelBtn = $("cancelNewChatDialog");
+
+  if (!dialog || !select || typeof dialog.showModal !== "function") {
+    return Promise.resolve(defaultNewChatStrategy);
+  }
+
+  select.value = normalizeContextStrategy(defaultNewChatStrategy);
+
+  return new Promise((resolve) => {
+    const onClose = () => {
+      const isCreate = dialog.returnValue === "create";
+      const chosen = isCreate ? normalizeContextStrategy(select.value) : null;
+      if (chosen) defaultNewChatStrategy = chosen;
+
+      dialog.removeEventListener("close", onClose);
+      cancelBtn?.removeEventListener("click", onCancel);
+      resolve(chosen);
+    };
+
+    const onCancel = () => {
+      dialog.close("cancel");
+    };
+
+    dialog.addEventListener("close", onClose);
+    cancelBtn?.addEventListener("click", onCancel);
+    dialog.showModal();
   });
 }
 
@@ -367,8 +426,10 @@ $("input").addEventListener("keydown", (e) => {
   }
 });
 
-$("newChat").addEventListener("click", () => {
-  createChat();
+$("newChat").addEventListener("click", async () => {
+  const selectedStrategy = await chooseNewChatStrategy();
+  if (!selectedStrategy) return;
+  createChat(selectedStrategy);
 });
 
 $("renameChat").addEventListener("click", () => {
