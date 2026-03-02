@@ -470,9 +470,23 @@ export class Agent {
     if (!this.apiKey) throw new Error("API key пустой (нужен для facts).");
 
     const currentKeys = Object.keys(this._toFactsObject(this.facts));
+    const keepLast = this._slidingWindowSize();
+    const recentMessages = this.history.slice(-keepLast);
+    const contextBlock =
+      recentMessages.length > 0
+        ? recentMessages
+            .map(
+              (m) =>
+                `${m.role === "user" ? "User" : "Assistant"}: ${String(
+                  m.text || "",
+                ).trim()}`,
+            )
+            .filter(Boolean)
+            .join("\n")
+        : "(empty)";
 
     const instruction =
-      `Ты извлекаешь facts из одного сообщения пользователя.\n` +
+      `Ты извлекаешь facts из контекста и нового сообщения пользователя.\n` +
       `Верни ТОЛЬКО JSON-объект.\n` +
       `Правила:\n` +
       `- Формат ответа: {"entries":[{"key":"...","value":"..."}]}\n` +
@@ -485,6 +499,7 @@ export class Agent {
     const input =
       `SYSTEM: ${instruction}\n` +
       `CURRENT_FACT_KEYS:\n${JSON.stringify(currentKeys)}\n` +
+      `CONTEXT:\n${contextBlock}\n` +
       `USER_MESSAGE:\n${String(nextUserText || "").trim()}\n` +
       `JSON:\n`;
 
@@ -569,10 +584,17 @@ export class Agent {
     parts.push(`SYSTEM: ${this.systemPreamble}`);
 
     if (this.contextStrategy === "sticky_facts") {
+      parts.push("CONTEXT:");
       const factsJson = JSON.stringify(this.facts, null, 2);
       if (factsJson && factsJson !== "{}") {
         parts.push("STICKY FACTS (key-value memory):");
         parts.push(factsJson);
+      }
+      if (tail.length > 0) {
+        parts.push("LAST MESSAGES:");
+        for (const m of tail) {
+          parts.push(`${m.role.toUpperCase()}: ${m.text}`);
+        }
       }
     } else if (
       this.contextStrategy !== "sliding_window" &&
@@ -584,7 +606,7 @@ export class Agent {
       }
     }
 
-    if (tail.length > 0) {
+    if (this.contextStrategy !== "sticky_facts" && tail.length > 0) {
       parts.push("RECENT MESSAGES:");
       for (const m of tail) {
         parts.push(`${m.role.toUpperCase()}: ${m.text}`);
