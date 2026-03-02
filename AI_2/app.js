@@ -52,6 +52,21 @@ function makeChatId() {
   return (crypto.randomUUID && crypto.randomUUID()) || `chat_${Date.now()}_${Math.random()}`;
 }
 
+function makeBranchId() {
+  return (crypto.randomUUID && crypto.randomUUID()) || `branch_${Date.now()}_${Math.random()}`;
+}
+
+function makeCheckpointId() {
+  return (crypto.randomUUID && crypto.randomUUID()) || `cp_${Date.now()}_${Math.random()}`;
+}
+
+function clonePlain(value) {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
 function defaultTotals() {
   return {
     requestInputTokens: 0,
@@ -61,33 +76,140 @@ function defaultTotals() {
   };
 }
 
+function nextBranchTitle(branches) {
+  let maxNum = 0;
+  for (const b of branches || []) {
+    const m = /^Ветка\s+(\d+)$/i.exec(b.title || "");
+    if (m) maxNum = Math.max(maxNum, Number(m[1]));
+  }
+  return `Ветка ${maxNum + 1}`;
+}
+
+function nextCheckpointTitle(checkpoints) {
+  let maxNum = 0;
+  for (const cp of checkpoints || []) {
+    const m = /^Checkpoint\s+(\d+)$/i.exec(cp.title || "");
+    if (m) maxNum = Math.max(maxNum, Number(m[1]));
+  }
+  return `Checkpoint ${maxNum + 1}`;
+}
+
+function makeDefaultBranching(baseState) {
+  const now = new Date().toISOString();
+  const branchId = makeBranchId();
+  return {
+    activeBranchId: branchId,
+    selectedCheckpointId: null,
+    branches: [
+      {
+        id: branchId,
+        title: "Ветка 1",
+        parentBranchId: null,
+        parentCheckpointId: null,
+        createdAt: now,
+        updatedAt: now,
+        state: clonePlain(baseState),
+      },
+    ],
+    checkpoints: [],
+  };
+}
+
+function normalizeBranching(rawBranching, fallbackState) {
+  const now = new Date().toISOString();
+  const fallback = fallbackState && typeof fallbackState === "object"
+    ? clonePlain(fallbackState)
+    : {};
+
+  if (rawBranching && typeof rawBranching === "object") {
+    const normalizedBranches = Array.isArray(rawBranching.branches)
+      ? rawBranching.branches
+          .filter((b) => b && typeof b.id === "string")
+          .map((b, idx) => ({
+            id: b.id,
+            title: typeof b.title === "string" && b.title.trim()
+              ? b.title.trim()
+              : `Ветка ${idx + 1}`,
+            parentBranchId: typeof b.parentBranchId === "string" ? b.parentBranchId : null,
+            parentCheckpointId: typeof b.parentCheckpointId === "string" ? b.parentCheckpointId : null,
+            createdAt: typeof b.createdAt === "string" ? b.createdAt : now,
+            updatedAt: typeof b.updatedAt === "string" ? b.updatedAt : now,
+            state: b.state && typeof b.state === "object" ? clonePlain(b.state) : clonePlain(fallback),
+          }))
+      : [];
+
+    if (normalizedBranches.length > 0) {
+      const activeBranchId = normalizedBranches.some((b) => b.id === rawBranching.activeBranchId)
+        ? rawBranching.activeBranchId
+        : normalizedBranches[0].id;
+
+      const checkpoints = Array.isArray(rawBranching.checkpoints)
+        ? rawBranching.checkpoints
+            .filter((cp) => cp && typeof cp.id === "string" && typeof cp.branchId === "string")
+            .filter((cp) => normalizedBranches.some((b) => b.id === cp.branchId))
+            .map((cp, idx) => ({
+              id: cp.id,
+              title: typeof cp.title === "string" && cp.title.trim()
+                ? cp.title.trim()
+                : `Checkpoint ${idx + 1}`,
+              branchId: cp.branchId,
+              createdAt: typeof cp.createdAt === "string" ? cp.createdAt : now,
+              messageCount: Number.isFinite(cp.messageCount) ? cp.messageCount : 0,
+              state: cp.state && typeof cp.state === "object" ? clonePlain(cp.state) : clonePlain(fallback),
+            }))
+        : [];
+
+      const selectedCheckpointId = checkpoints.some((cp) => cp.id === rawBranching.selectedCheckpointId)
+        ? rawBranching.selectedCheckpointId
+        : null;
+
+      return {
+        activeBranchId,
+        selectedCheckpointId,
+        branches: normalizedBranches,
+        checkpoints,
+      };
+    }
+  }
+
+  return makeDefaultBranching(fallback);
+}
+
 function normalizeStore(raw, fallbackConfig) {
   if (raw && Array.isArray(raw.chats) && typeof raw.activeChatId === "string") {
     const chats = raw.chats
-      .filter((c) => c && typeof c.id === "string" && c.state)
-      .map((c) => ({
-        id: c.id,
-        title: typeof c.title === "string" && c.title.trim() ? c.title : "Чат",
-        contextStrategy: normalizeContextStrategy(c.contextStrategy),
-        createdAt: typeof c.createdAt === "string" ? c.createdAt : new Date().toISOString(),
-        updatedAt: typeof c.updatedAt === "string" ? c.updatedAt : new Date().toISOString(),
-        state: c.state,
-      }));
+      .filter((c) => c && typeof c.id === "string")
+      .map((c) => {
+        const legacyState = c.state && typeof c.state === "object" ? c.state : null;
+        const branching = normalizeBranching(c.branching, legacyState || {});
+        const activeBranch =
+          branching.branches.find((b) => b.id === branching.activeBranchId) || branching.branches[0];
+
+        return {
+          id: c.id,
+          title: typeof c.title === "string" && c.title.trim() ? c.title : "Чат",
+          contextStrategy: normalizeContextStrategy(c.contextStrategy),
+          createdAt: typeof c.createdAt === "string" ? c.createdAt : new Date().toISOString(),
+          updatedAt: typeof c.updatedAt === "string" ? c.updatedAt : new Date().toISOString(),
+          state: clonePlain(activeBranch.state),
+          branching,
+        };
+      });
 
     if (chats.length > 0) {
       const hasActive = chats.some((c) => c.id === raw.activeChatId);
       return {
-        version: 1,
+        version: 2,
         activeChatId: hasActive ? raw.activeChatId : chats[0].id,
         chats,
       };
     }
   }
 
-  // migrate old single-chat state format
   if (raw && typeof raw === "object" && Array.isArray(raw.history) && raw.config) {
+    const branching = normalizeBranching(null, raw);
     return {
-      version: 1,
+      version: 2,
       activeChatId: "chat_1",
       chats: [
         {
@@ -96,7 +218,8 @@ function normalizeStore(raw, fallbackConfig) {
           contextStrategy: DEFAULT_CONTEXT_STRATEGY,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          state: raw,
+          state: clonePlain(raw),
+          branching,
         },
       ],
     };
@@ -109,8 +232,11 @@ function normalizeStore(raw, fallbackConfig) {
     temperature: fallbackConfig.temperature,
   });
 
+  const initialState = initialAgent.exportState();
+  const branching = normalizeBranching(null, initialState);
+
   return {
-    version: 1,
+    version: 2,
     activeChatId: "chat_1",
     chats: [
       {
@@ -119,7 +245,8 @@ function normalizeStore(raw, fallbackConfig) {
         contextStrategy: DEFAULT_CONTEXT_STRATEGY,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        state: initialAgent.exportState(),
+        state: clonePlain(initialState),
+        branching,
       },
     ],
   };
@@ -156,6 +283,15 @@ function getActiveChat() {
   return store.chats.find((c) => c.id === activeChatId) || null;
 }
 
+function getActiveBranch(chat) {
+  const currentChat = chat || getActiveChat();
+  if (!currentChat) return null;
+
+  currentChat.branching = normalizeBranching(currentChat.branching, currentChat.state || {});
+  const branching = currentChat.branching;
+  return branching.branches.find((b) => b.id === branching.activeBranchId) || branching.branches[0] || null;
+}
+
 function renderChatSelector() {
   const select = $("chatSelect");
   select.innerHTML = "";
@@ -171,9 +307,72 @@ function renderChatSelector() {
   $("deleteChat").disabled = store.chats.length <= 1;
 }
 
+function renderBranchingControls() {
+  const chat = getActiveChat();
+  const branchSelect = $("branchSelect");
+  const checkpointSelect = $("checkpointSelect");
+  const saveBtn = $("saveCheckpoint");
+  const forkBtn = $("newBranchFromCheckpoint");
+
+  if (!chat || !branchSelect || !checkpointSelect || !saveBtn || !forkBtn) return;
+
+  chat.branching = normalizeBranching(chat.branching, chat.state || {});
+
+  const branching = chat.branching;
+  const isBranchingStrategy = normalizeContextStrategy(chat.contextStrategy) === "branching";
+
+  branchSelect.innerHTML = "";
+  checkpointSelect.innerHTML = "";
+
+  for (const b of branching.branches) {
+    const opt = document.createElement("option");
+    opt.value = b.id;
+    opt.textContent = b.title;
+    branchSelect.appendChild(opt);
+  }
+
+  branchSelect.value = branching.activeBranchId;
+
+  const activeBranchId = branching.activeBranchId;
+  const cps = branching.checkpoints.filter((cp) => cp.branchId === activeBranchId);
+
+  for (const cp of cps) {
+    const opt = document.createElement("option");
+    opt.value = cp.id;
+    const countPart = Number.isFinite(cp.messageCount) ? ` • msgs: ${cp.messageCount}` : "";
+    opt.textContent = `${cp.title}${countPart}`;
+    checkpointSelect.appendChild(opt);
+  }
+
+  if (cps.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "Checkpoint-ов нет";
+    checkpointSelect.appendChild(opt);
+  }
+
+  const selectedCheckpoint = cps.some((cp) => cp.id === branching.selectedCheckpointId)
+    ? branching.selectedCheckpointId
+    : cps[0]
+      ? cps[0].id
+      : "";
+  branching.selectedCheckpointId = selectedCheckpoint || null;
+  checkpointSelect.value = selectedCheckpoint;
+
+  branchSelect.disabled = !isBranchingStrategy;
+  checkpointSelect.disabled = !isBranchingStrategy;
+  saveBtn.disabled = !isBranchingStrategy;
+  forkBtn.disabled = !isBranchingStrategy || cps.length === 0;
+}
+
 function bindAgentToActiveChat() {
   const chat = getActiveChat();
   if (!chat) return;
+
+  chat.branching = normalizeBranching(chat.branching, chat.state || {});
+  const activeBranch = getActiveBranch(chat);
+  if (!activeBranch) return;
+
   const contextStrategy = normalizeContextStrategy(chat.contextStrategy);
   const activeStrategyInput = $("activeChatContextStrategy");
   if (activeStrategyInput) {
@@ -181,7 +380,10 @@ function bindAgentToActiveChat() {
   }
 
   const currentApiKey = getEffectiveApiKey();
-  const chatConfig = (chat.state && chat.state.config) || {};
+  const branchState = activeBranch.state && typeof activeBranch.state === "object"
+    ? activeBranch.state
+    : (chat.state || {});
+  const chatConfig = (branchState && branchState.config) || {};
 
   agent = new Agent({
     baseUrl: typeof chatConfig.baseUrl === "string" ? chatConfig.baseUrl : fallbackConfig.baseUrl,
@@ -193,8 +395,11 @@ function bindAgentToActiveChat() {
   });
 
   agent.onStateChanged = (state) => {
-    chat.state = state;
-    chat.updatedAt = new Date().toISOString();
+    const now = new Date().toISOString();
+    activeBranch.state = clonePlain(state);
+    activeBranch.updatedAt = now;
+    chat.state = clonePlain(state);
+    chat.updatedAt = now;
     persistStore();
     renderFactsPanel(contextStrategy, state.facts || agent.facts || {});
 
@@ -204,23 +409,24 @@ function bindAgentToActiveChat() {
       state.summaryTotals || agent.summaryTotals,
     );
     renderTotalsBar(globalTotals);
+    renderBranchingControls();
   };
 
-  if (chat.state) {
-    agent.importState(chat.state);
+  if (branchState) {
+    agent.importState(branchState);
   }
   agent.setContextStrategy(contextStrategy);
   renderFactsPanel(contextStrategy, agent.facts || {});
 
-  if (chat.state && chat.state.config) {
-    if (typeof chat.state.config.baseUrl === "string") {
-      $("baseUrl").value = chat.state.config.baseUrl;
+  if (branchState && branchState.config) {
+    if (typeof branchState.config.baseUrl === "string") {
+      $("baseUrl").value = branchState.config.baseUrl;
     }
-    if (typeof chat.state.config.model === "string") {
-      $("model").value = chat.state.config.model;
+    if (typeof branchState.config.model === "string") {
+      $("model").value = branchState.config.model;
     }
-    if (typeof chat.state.config.temperature === "number") {
-      $("temperature").value = String(chat.state.config.temperature);
+    if (typeof branchState.config.temperature === "number") {
+      $("temperature").value = String(branchState.config.temperature);
     }
   }
 
@@ -238,12 +444,27 @@ function bindAgentToActiveChat() {
     });
     renderTotalsBar(mergeTotals(defaultTotals(), agent.summaryTotals));
   }
+
+  renderBranchingControls();
 }
 
 function switchToChat(chatId) {
   if (!store.chats.some((c) => c.id === chatId)) return;
   activeChatId = chatId;
   renderChatSelector();
+  bindAgentToActiveChat();
+  persistStore();
+}
+
+function switchToBranch(branchId) {
+  const chat = getActiveChat();
+  if (!chat) return;
+
+  chat.branching = normalizeBranching(chat.branching, chat.state || {});
+  if (!chat.branching.branches.some((b) => b.id === branchId)) return;
+
+  chat.branching.activeBranchId = branchId;
+  chat.updatedAt = new Date().toISOString();
   bindAgentToActiveChat();
   persistStore();
 }
@@ -260,13 +481,16 @@ function createChat(strategyValue) {
     temperature: Number($("temperature").value),
   });
 
+  const initialState = newAgent.exportState();
+
   const chat = {
     id: chatId,
     title: nextChatTitle(store.chats),
     contextStrategy: selectedStrategy,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    state: newAgent.exportState(),
+    state: clonePlain(initialState),
+    branching: normalizeBranching(null, initialState),
   };
 
   store.chats.push(chat);
@@ -275,6 +499,39 @@ function createChat(strategyValue) {
   addMessage({
     role: "assistant",
     text: `Новый независимый чат создан. Стратегия: ${contextStrategyLabel(selectedStrategy)}.`,
+    meta: { statsLines: [] },
+  });
+}
+
+function createChatFromCurrent() {
+  const sourceChat = getActiveChat();
+  if (!sourceChat) return;
+
+  const sourceBranch = getActiveBranch(sourceChat);
+  const sourceState = sourceBranch && sourceBranch.state
+    ? clonePlain(sourceBranch.state)
+    : (agent ? clonePlain(agent.exportState()) : clonePlain(sourceChat.state || {}));
+
+  const now = new Date().toISOString();
+  const chatId = makeChatId();
+  const selectedStrategy = normalizeContextStrategy(sourceChat.contextStrategy);
+
+  const chat = {
+    id: chatId,
+    title: nextChatTitle(store.chats),
+    contextStrategy: selectedStrategy,
+    createdAt: now,
+    updatedAt: now,
+    state: clonePlain(sourceState),
+    branching: normalizeBranching(null, sourceState),
+  };
+
+  store.chats.push(chat);
+  switchToChat(chatId);
+
+  addMessage({
+    role: "assistant",
+    text: "Создан новый чат на основе текущего. Дальше они независимы.",
     meta: { statsLines: [] },
   });
 }
@@ -343,6 +600,98 @@ function deleteActiveChat() {
   switchToChat(activeChatId);
 }
 
+function saveCheckpoint() {
+  const chat = getActiveChat();
+  const branch = getActiveBranch(chat);
+  if (!chat || !branch || !agent) return;
+
+  if (normalizeContextStrategy(chat.contextStrategy) !== "branching") {
+    window.alert("Checkpoint доступен только для стратегии Branching.");
+    return;
+  }
+
+  chat.branching = normalizeBranching(chat.branching, chat.state || {});
+
+  const snapshot = agent.exportState();
+  const checkpoint = {
+    id: makeCheckpointId(),
+    title: nextCheckpointTitle(chat.branching.checkpoints),
+    branchId: branch.id,
+    createdAt: new Date().toISOString(),
+    messageCount: Array.isArray(snapshot.history) ? snapshot.history.length : 0,
+    state: clonePlain(snapshot),
+  };
+
+  chat.branching.checkpoints.push(checkpoint);
+  chat.branching.selectedCheckpointId = checkpoint.id;
+  chat.updatedAt = new Date().toISOString();
+  persistStore();
+  renderBranchingControls();
+
+  addMessage({
+    role: "assistant",
+    text: `Сохранён ${checkpoint.title} для ветки "${branch.title}".`,
+    meta: { statsLines: [] },
+  });
+}
+
+function createBranchFromCheckpoint() {
+  const chat = getActiveChat();
+  if (!chat) return;
+
+  if (normalizeContextStrategy(chat.contextStrategy) !== "branching") {
+    window.alert("Ответвление доступно только для стратегии Branching.");
+    return;
+  }
+
+  chat.branching = normalizeBranching(chat.branching, chat.state || {});
+
+  const select = $("checkpointSelect");
+  const checkpointId = select && typeof select.value === "string"
+    ? select.value
+    : (chat.branching.selectedCheckpointId || "");
+
+  if (!checkpointId) {
+    window.alert("Сначала сохраните checkpoint.");
+    return;
+  }
+
+  const checkpoint = chat.branching.checkpoints.find((cp) => cp.id === checkpointId);
+  if (!checkpoint) {
+    window.alert("Выбранный checkpoint не найден.");
+    return;
+  }
+
+  const branchId = makeBranchId();
+  const now = new Date().toISOString();
+
+  const newBranch = {
+    id: branchId,
+    title: nextBranchTitle(chat.branching.branches),
+    parentBranchId: checkpoint.branchId,
+    parentCheckpointId: checkpoint.id,
+    createdAt: now,
+    updatedAt: now,
+    state: clonePlain(checkpoint.state),
+  };
+
+  chat.branching.branches.push(newBranch);
+  chat.branching.activeBranchId = branchId;
+  chat.branching.selectedCheckpointId = checkpoint.id;
+  chat.updatedAt = now;
+  chat.state = clonePlain(newBranch.state);
+
+  renderChatSelector();
+  bindAgentToActiveChat();
+  persistStore();
+
+  addMessage({
+    role: "assistant",
+    text: `Создана ${newBranch.title} от ${checkpoint.title}. Теперь ветки независимы.`,
+    meta: { statsLines: [] },
+  });
+}
+
 function syncAgentConfig() {
   if (!agent) return;
   agent.setConfig({
@@ -359,7 +708,6 @@ async function handleSend() {
 
   syncAgentConfig();
 
-  // Optimistic render
   const optimisticUser = {
     role: "user",
     text,
@@ -379,7 +727,6 @@ async function handleSend() {
 
   setBusy(true);
 
-  // Typing placeholder
   const typing = document.createElement("div");
   typing.className = "msg assistant";
   typing.innerHTML = `
@@ -393,22 +740,20 @@ async function handleSend() {
   $("messages").scrollTop = $("messages").scrollHeight;
 
   try {
-    // Remove optimistic
     agent.history.pop();
     agent._emitStateChanged();
 
     await agent.send(text);
 
     typing.remove();
-    const chat = getActiveChat();
+    const activeChat = getActiveChat();
     renderHistory(agent.history, agent.summaryTotals, agent.summaries, {
-      contextStrategy: normalizeContextStrategy(chat && chat.contextStrategy),
+      contextStrategy: normalizeContextStrategy(activeChat && activeChat.contextStrategy),
       keepLastMessages: agent.contextPolicy.keepLastMessages,
     });
   } catch (err) {
     typing.remove();
 
-    // Restore optimistic message
     agent.history.push(optimisticUser);
     agent._emitStateChanged();
 
@@ -429,10 +774,10 @@ async function handleSend() {
   } finally {
     setBusy(false);
     renderChatSelector();
+    renderBranchingControls();
   }
 }
 
-// Boot
 renderChatSelector();
 bindAgentToActiveChat();
 
@@ -466,6 +811,10 @@ $("newChat").addEventListener("click", async () => {
   const selectedStrategy = await chooseNewChatStrategy();
   if (!selectedStrategy) return;
   createChat(selectedStrategy);
+});
+
+$("branchChat").addEventListener("click", () => {
+  createChatFromCurrent();
 });
 
 $("renameChat").addEventListener("click", () => {
