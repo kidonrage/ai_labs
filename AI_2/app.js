@@ -154,9 +154,10 @@ function renderChatSelector() {
 function bindAgentToActiveChat() {
   const chat = getActiveChat();
   if (!chat) return;
+  const contextStrategy = normalizeContextStrategy(chat.contextStrategy);
   const activeStrategyInput = $("activeChatContextStrategy");
   if (activeStrategyInput) {
-    activeStrategyInput.value = contextStrategyLabel(chat.contextStrategy);
+    activeStrategyInput.value = contextStrategyLabel(contextStrategy);
   }
 
   const currentApiKey = $("apiKey").value.trim();
@@ -187,6 +188,7 @@ function bindAgentToActiveChat() {
   if (chat.state) {
     agent.importState(chat.state);
   }
+  agent.setContextStrategy(contextStrategy);
 
   if (chat.state && chat.state.config) {
     if (typeof chat.state.config.baseUrl === "string") {
@@ -201,7 +203,10 @@ function bindAgentToActiveChat() {
   }
 
   if (Array.isArray(agent.history) && agent.history.length > 0) {
-    renderHistory(agent.history, agent.summaryTotals);
+    renderHistory(agent.history, agent.summaryTotals, agent.summaries, {
+      contextStrategy,
+      keepLastMessages: agent.contextPolicy.keepLastMessages,
+    });
   } else {
     $("messages").innerHTML = "";
     addMessage({
@@ -341,7 +346,11 @@ async function handleSend() {
   agent.history.push(optimisticUser);
   agent._emitStateChanged();
 
-  renderHistory(agent.history, agent.summaryTotals);
+  const chat = getActiveChat();
+  renderHistory(agent.history, agent.summaryTotals, agent.summaries, {
+    contextStrategy: normalizeContextStrategy(chat && chat.contextStrategy),
+    keepLastMessages: agent.contextPolicy.keepLastMessages,
+  });
 
   $("input").value = "";
   $("input").focus();
@@ -369,7 +378,11 @@ async function handleSend() {
     await agent.send(text);
 
     typing.remove();
-    renderHistory(agent.history, agent.summaryTotals);
+    const chat = getActiveChat();
+    renderHistory(agent.history, agent.summaryTotals, agent.summaries, {
+      contextStrategy: normalizeContextStrategy(chat && chat.contextStrategy),
+      keepLastMessages: agent.contextPolicy.keepLastMessages,
+    });
   } catch (err) {
     typing.remove();
 

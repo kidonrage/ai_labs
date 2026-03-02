@@ -1,12 +1,24 @@
 import { OpenAIModelPricing } from "./pricing.js";
 import { normalizeUsage } from "./helpers.js";
 
+const DEFAULT_CONTEXT_STRATEGY = "sticky_facts";
+const CONTEXT_STRATEGIES = new Set([
+  "sliding_window",
+  "sticky_facts",
+  "branching",
+]);
+
+function normalizeContextStrategy(value) {
+  return CONTEXT_STRATEGIES.has(value) ? value : DEFAULT_CONTEXT_STRATEGY;
+}
+
 export class Agent {
-  constructor({ baseUrl, apiKey, model, temperature }) {
+  constructor({ baseUrl, apiKey, model, temperature, contextStrategy }) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.model = model;
     this.temperature = temperature;
+    this.contextStrategy = normalizeContextStrategy(contextStrategy);
 
     this.history = [];
 
@@ -24,7 +36,7 @@ export class Agent {
     };
 
     this.contextPolicy = {
-      keepLastMessages: 12,
+      keepLastMessages: 4,
       chunkSize: 10,
       maxSummaryChars: 1400,
 
@@ -55,6 +67,11 @@ export class Agent {
     this._emitStateChanged();
   }
 
+  setContextStrategy(strategy) {
+    this.contextStrategy = normalizeContextStrategy(strategy);
+    this._emitStateChanged();
+  }
+
   reset() {
     this.history = [];
     this.summaries = [];
@@ -79,6 +96,7 @@ export class Agent {
         temperature: this.temperature,
       },
       systemPreamble: this.systemPreamble,
+      contextStrategy: this.contextStrategy,
       contextPolicy: this.contextPolicy,
       summaries: this.summaries,
       summaryTotals: this.summaryTotals,
@@ -91,6 +109,9 @@ export class Agent {
 
     if (typeof state.systemPreamble === "string") {
       this.systemPreamble = state.systemPreamble;
+    }
+    if (typeof state.contextStrategy === "string") {
+      this.contextStrategy = normalizeContextStrategy(state.contextStrategy);
     }
 
     if (state.config && typeof state.config === "object") {
@@ -177,6 +198,10 @@ export class Agent {
     }
   }
 
+  _slidingWindowSize() {
+    return Math.max(1, Number(this.contextPolicy.keepLastMessages) || 12);
+  }
+
   // =====================
   // Summarization (LLM)
   // =====================
@@ -201,18 +226,20 @@ export class Agent {
       0,
       Number(this.contextPolicy.keepLastMessages) || 0,
     );
-    const chunkSize = Math.max(2, Number(this.contextPolicy.chunkSize) || 10);
+    const chunkSize = Math.max(1, Number(this.contextPolicy.chunkSize) || 10);
 
     const total = this.history.length;
     if (total <= keepLast) return null;
 
     const unsummarizedStart = Math.max(0, total - keepLast);
     const summarizedUntil = this._getSummarizedUntilIndexExclusive();
+    const unsummarizedCount = unsummarizedStart - summarizedUntil;
 
-    if (summarizedUntil + chunkSize <= unsummarizedStart) {
+    if (unsummarizedCount > 0) {
+      const nextChunkSize = Math.min(chunkSize, unsummarizedCount);
       return {
         fromIndex: summarizedUntil,
-        toIndex: summarizedUntil + chunkSize - 1,
+        toIndex: summarizedUntil + nextChunkSize - 1,
       };
     }
     return null;
@@ -344,21 +371,26 @@ export class Agent {
   // =====================
 
   async _buildContextInput(nextUserText) {
-    // Ensure summaries exist before sending main request
-    await this._ensureSummariesUpToDate();
+    const keepLast = this._slidingWindowSize();
+    let tail = [];
 
-    const keepLast = Math.max(
-      0,
-      Number(this.contextPolicy.keepLastMessages) || 0,
-    );
-    const total = this.history.length;
-    const tailStart = Math.max(0, total - keepLast);
-    const tail = this.history.slice(tailStart);
+    if (this.contextStrategy === "sliding_window") {
+      tail = this.history.slice(-keepLast);
+    } else {
+      // Ensure summaries exist before sending main request
+      await this._ensureSummariesUpToDate();
+      const total = this.history.length;
+      const tailStart = Math.max(0, total - keepLast);
+      tail = this.history.slice(tailStart);
+    }
 
     const parts = [];
     parts.push(`SYSTEM: ${this.systemPreamble}`);
 
-    if (this.summaries.length > 0) {
+    if (
+      this.contextStrategy !== "sliding_window" &&
+      this.summaries.length > 0
+    ) {
       parts.push("CONTEXT SUMMARY (older messages):");
       for (const s of this.summaries) {
         parts.push(`- ${s.text}`);
@@ -465,9 +497,11 @@ export class Agent {
 
     this.history.push(assistantMsg);
 
-    // After pushing new messages, we may be able to summarize older chunks for next turns
-    // (async, but awaited to keep state consistent)
-    await this._ensureSummariesUpToDate();
+    if (this.contextStrategy !== "sliding_window") {
+      // After pushing new messages, we may be able to summarize older chunks for next turns
+      // (async, but awaited to keep state consistent)
+      await this._ensureSummariesUpToDate();
+    }
 
     this._emitStateChanged();
 

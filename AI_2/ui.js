@@ -106,6 +106,20 @@ export function addMessage({ role, text, meta = {} }) {
   $("messages").scrollTop = $("messages").scrollHeight;
 }
 
+function addContextSummarySeparator(summary) {
+  const wrap = document.createElement("div");
+  wrap.className = "ctx-separator";
+
+  const label = document.createElement("span");
+  const at = summary && typeof summary.at === "string"
+    ? formatTimeFromISO(summary.at)
+    : formatTime();
+  label.textContent = `Контекст суммаризирован (${at})`;
+  wrap.appendChild(label);
+
+  $("messages").appendChild(wrap);
+}
+
 export function renderTotalsBar(globalTotals) {
   const el = $("totals");
   if (!el) return;
@@ -141,16 +155,60 @@ export function renderTotalsBar(globalTotals) {
   el.textContent = historyPart + summaryPart;
 }
 
-export function renderHistory(history, summaryTotals) {
+export function renderHistory(
+  history,
+  summaryTotals,
+  summaries = [],
+  options = {},
+) {
   $("messages").innerHTML = "";
 
   const historyTotals = computeHistoryTotals(history);
   const globalTotals = mergeTotals(historyTotals, summaryTotals);
+  const contextStrategy =
+    options && typeof options.contextStrategy === "string"
+      ? options.contextStrategy
+      : "";
+  const keepLastMessages = Math.max(
+    1,
+    Number(options && options.keepLastMessages) || 12,
+  );
+  const separatorsByIndex = new Map();
+  const addSeparator = (sep) => {
+    if (!sep || !Number.isFinite(sep.toIndex)) return;
+    const idx = Number(sep.toIndex);
+    if (!separatorsByIndex.has(idx)) separatorsByIndex.set(idx, []);
+    separatorsByIndex.get(idx).push(sep);
+  };
 
-  for (const m of history) {
+  const summaryList = Array.isArray(summaries) ? summaries : [];
+  for (const s of summaryList) {
+    addSeparator(s);
+  }
+
+  const boundaryIndex =
+    contextStrategy === "sliding_window" && history.length > keepLastMessages
+      ? history.length - keepLastMessages
+      : -1;
+  const boundaryAt =
+    boundaryIndex >= 0 &&
+    history[boundaryIndex] &&
+    typeof history[boundaryIndex].at === "string"
+      ? history[boundaryIndex].at
+      : new Date().toISOString();
+
+  for (let idx = 0; idx < history.length; idx += 1) {
+    if (idx === boundaryIndex) {
+      addContextSummarySeparator({ at: boundaryAt });
+    }
+    const m = history[idx];
     const time = m.at ? formatTimeFromISO(m.at) : formatTime();
     const statsLines = messageStatsLines(m);
     addMessage({ role: m.role, text: m.text, meta: { time, statsLines } });
+    const separators = separatorsByIndex.get(idx) || [];
+    for (const s of separators) {
+      addContextSummarySeparator(s);
+    }
   }
 
   renderTotalsBar(globalTotals);
