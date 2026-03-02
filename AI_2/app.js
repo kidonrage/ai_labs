@@ -16,6 +16,8 @@ const CONTEXT_STRATEGIES = new Set([
   "sticky_facts",
   "branching",
 ]);
+const privateConfig = await loadPrivateConfig();
+const privateApiKey = getPrivateApiKey(privateConfig);
 
 function normalizeContextStrategy(value) {
   return CONTEXT_STRATEGIES.has(value) ? value : DEFAULT_CONTEXT_STRATEGY;
@@ -26,6 +28,23 @@ function contextStrategyLabel(value) {
   if (strategy === "sliding_window") return "Sliding Window";
   if (strategy === "branching") return "Branching (ветки диалога)";
   return "Sticky Facts / Key-Value Memory";
+}
+
+async function loadPrivateConfig() {
+  try {
+    const mod = await import("./private.config.js");
+    return (mod && mod.PRIVATE_APP_CONFIG) || {};
+  } catch {
+    return {};
+  }
+}
+
+function getPrivateApiKey(cfg) {
+  return cfg && typeof cfg.apiKey === "string" ? cfg.apiKey.trim() : "";
+}
+
+function getEffectiveApiKey() {
+  return privateApiKey;
 }
 
 function makeChatId() {
@@ -160,7 +179,7 @@ function bindAgentToActiveChat() {
     activeStrategyInput.value = contextStrategyLabel(contextStrategy);
   }
 
-  const currentApiKey = $("apiKey").value.trim();
+  const currentApiKey = getEffectiveApiKey();
   const chatConfig = (chat.state && chat.state.config) || {};
 
   agent = new Agent({
@@ -227,7 +246,7 @@ function switchToChat(chatId) {
 }
 
 function createChat(strategyValue) {
-  const currentApiKey = $("apiKey").value.trim();
+  const currentApiKey = getEffectiveApiKey();
   const chatId = makeChatId();
   const selectedStrategy = normalizeContextStrategy(strategyValue);
 
@@ -325,7 +344,7 @@ function syncAgentConfig() {
   if (!agent) return;
   agent.setConfig({
     baseUrl: $("baseUrl").value.trim(),
-    apiKey: $("apiKey").value.trim(),
+    apiKey: getEffectiveApiKey(),
     model: $("model").value,
     temperature: Number($("temperature").value),
   });
@@ -417,8 +436,9 @@ bindAgentToActiveChat();
 if (persisted) {
   addMessage({
     role: "assistant",
-    text:
-      "Чаты восстановлены из localStorage. API key не сохраняется, его нужно вводить заново.",
+    text: privateApiKey
+      ? "Чаты восстановлены из localStorage. API key загружен из private.config.js."
+      : "Чаты восстановлены из localStorage. API key не сохраняется, его нужно вводить заново.",
     meta: { statsLines: [] },
   });
 } else {
@@ -457,6 +477,6 @@ $("chatSelect").addEventListener("change", (e) => {
   switchToChat(e.target.value);
 });
 
-["baseUrl", "apiKey", "model", "temperature"].forEach((id) => {
+["baseUrl", "model", "temperature"].forEach((id) => {
   $(id).addEventListener("change", syncAgentConfig);
 });

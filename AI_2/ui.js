@@ -225,7 +225,6 @@ export function setBusy(isBusy) {
     "model",
     "temperature",
     "baseUrl",
-    "apiKey",
   ];
 
   for (const id of ids) {
