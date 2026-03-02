@@ -4,6 +4,7 @@ import { computeHistoryTotals, mergeTotals, formatTime } from "./helpers.js";
 import {
   addMessage,
   renderHistory,
+  renderFactsPanel,
   renderTotalsBar,
   setBusy,
   messageStatsLines,
@@ -195,6 +196,7 @@ function bindAgentToActiveChat() {
     chat.state = state;
     chat.updatedAt = new Date().toISOString();
     persistStore();
+    renderFactsPanel(contextStrategy, state.facts || agent.facts || {});
 
     const historyTotals = computeHistoryTotals(state.history || []);
     const globalTotals = mergeTotals(
@@ -208,6 +210,7 @@ function bindAgentToActiveChat() {
     agent.importState(chat.state);
   }
   agent.setContextStrategy(contextStrategy);
+  renderFactsPanel(contextStrategy, agent.facts || {});
 
   if (chat.state && chat.state.config) {
     if (typeof chat.state.config.baseUrl === "string") {

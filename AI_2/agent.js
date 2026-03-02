@@ -25,6 +25,7 @@ export class Agent {
     // Summary chunks stored separately
     // { id, fromIndex, toIndex, at, text }
     this.summaries = [];
+    this.facts = {};
 
     // Separate accounting for summarization
     this.summaryTotals = {
@@ -43,6 +44,8 @@ export class Agent {
       // NEW: summarize via cheap LLM
       summaryModel: "gpt-3.5-turbo",
       summaryTemperature: 0.2,
+      factsModel: "gpt-3.5-turbo",
+      factsTemperature: 0.1,
     };
 
     this.systemPreamble =
@@ -75,6 +78,7 @@ export class Agent {
   reset() {
     this.history = [];
     this.summaries = [];
+    this.facts = {};
     this.summaryTotals = {
       summaryRequests: 0,
       summaryInputTokens: 0,
@@ -99,6 +103,7 @@ export class Agent {
       contextStrategy: this.contextStrategy,
       contextPolicy: this.contextPolicy,
       summaries: this.summaries,
+      facts: this.facts,
       summaryTotals: this.summaryTotals,
       history: this.history,
     };
@@ -137,6 +142,13 @@ export class Agent {
           at: typeof s.at === "string" ? s.at : new Date().toISOString(),
           text: s.text,
         }));
+    }
+    if (
+      state.facts &&
+      typeof state.facts === "object" &&
+      !Array.isArray(state.facts)
+    ) {
+      this.facts = this._toFactsObject(state.facts);
     }
 
     if (state.summaryTotals && typeof state.summaryTotals === "object") {
@@ -200,6 +212,94 @@ export class Agent {
 
   _slidingWindowSize() {
     return Math.max(1, Number(this.contextPolicy.keepLastMessages) || 12);
+  }
+
+  _toFactsObject(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return {};
+    }
+    const out = {};
+    for (const [rawKey, rawVal] of Object.entries(value)) {
+      if (typeof rawKey !== "string") continue;
+      const key = rawKey.trim();
+      if (!key || key.toLowerCase() === "recent_messages") continue;
+
+      if (typeof rawVal === "string") {
+        const t = rawVal.trim();
+        if (t) out[key] = [t];
+      } else if (Array.isArray(rawVal)) {
+        const arr = rawVal
+          .filter((x) => typeof x === "string")
+          .map((x) => x.trim())
+          .filter((x) => x.length > 0);
+        if (arr.length > 0) out[key] = Array.from(new Set(arr));
+      }
+    }
+    return out;
+  }
+
+  _extractJsonObject(text) {
+    const t = String(text || "").trim();
+    if (!t) return null;
+    try {
+      return JSON.parse(t);
+    } catch {
+      const start = t.indexOf("{");
+      const end = t.lastIndexOf("}");
+      if (start >= 0 && end > start) {
+        try {
+          return JSON.parse(t.slice(start, end + 1));
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+  }
+
+  _extractFactEntries(parsed) {
+    if (!parsed || typeof parsed !== "object") return [];
+
+    const entries = [];
+    const push = (k, v) => {
+      if (typeof k !== "string" || typeof v !== "string") return;
+      const key = k.trim();
+      const value = v.trim();
+      if (!key || !value || key.toLowerCase() === "recent_messages") return;
+      entries.push({ key, value });
+    };
+
+    if (Array.isArray(parsed.entries)) {
+      for (const e of parsed.entries) {
+        if (!e || typeof e !== "object") continue;
+        push(e.key, e.value);
+      }
+      return entries;
+    }
+
+    if (typeof parsed.key === "string" && typeof parsed.value === "string") {
+      push(parsed.key, parsed.value);
+      return entries;
+    }
+
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "string") {
+        push(k, v);
+      } else if (Array.isArray(v)) {
+        for (const item of v) push(k, item);
+      }
+    }
+
+    return entries;
+  }
+
+  _mergeFactEntries(entries) {
+    const facts = this._toFactsObject(this.facts);
+    for (const e of entries) {
+      if (!facts[e.key]) facts[e.key] = [];
+      if (!facts[e.key].includes(e.value)) facts[e.key].push(e.value);
+    }
+    this.facts = facts;
   }
 
   // =====================
@@ -366,6 +466,84 @@ export class Agent {
     return summaryText;
   }
 
+  async _updateFactsWithLLM(nextUserText) {
+    if (!this.apiKey) throw new Error("API key пустой (нужен для facts).");
+
+    const currentKeys = Object.keys(this._toFactsObject(this.facts));
+
+    const instruction =
+      `Ты извлекаешь facts из одного сообщения пользователя.\n` +
+      `Верни ТОЛЬКО JSON-объект.\n` +
+      `Правила:\n` +
+      `- Формат ответа: {"entries":[{"key":"...","value":"..."}]}\n` +
+      `- value: одна короткая строка факта.\n` +
+      `- key: тематическая категория (goal, constraints, preferences, decisions, agreements и т.п.).\n` +
+      `- Если в сообщении нет новых устойчивых фактов: {"entries":[]}\n` +
+      `- Не добавляй историю диалога и не используй ключ "recent_messages".\n` +
+      `- Не выдумывай факты.\n`;
+
+    const input =
+      `SYSTEM: ${instruction}\n` +
+      `CURRENT_FACT_KEYS:\n${JSON.stringify(currentKeys)}\n` +
+      `USER_MESSAGE:\n${String(nextUserText || "").trim()}\n` +
+      `JSON:\n`;
+
+    const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
+    const body = {
+      model:
+        this.contextPolicy.factsModel ||
+        this.contextPolicy.summaryModel ||
+        "gpt-3.5-turbo",
+      input,
+      temperature: Number(this.contextPolicy.factsTemperature ?? 0.1),
+    };
+
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + this.apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`Facts HTTP ${resp.status}: ${text || resp.statusText}`);
+    }
+
+    const dto = await resp.json();
+    const factsText = Agent.extractAnswerText(dto);
+    if (!factsText) throw new Error("Facts: пустой output_text.");
+
+    const parsed = this._extractJsonObject(factsText);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Facts: модель вернула не JSON-объект.");
+    }
+    const entries = this._extractFactEntries(parsed);
+    this._mergeFactEntries(entries);
+
+    const usage = normalizeUsage(dto);
+    const modelName = dto.model || body.model;
+    const costRub = usage
+      ? OpenAIModelPricing.costRub(
+          modelName,
+          usage.inputTokens,
+          usage.outputTokens,
+        )
+      : null;
+
+    if (usage) {
+      this.summaryTotals.summaryRequests += 1;
+      this.summaryTotals.summaryInputTokens += usage.inputTokens;
+      this.summaryTotals.summaryOutputTokens += usage.outputTokens;
+      this.summaryTotals.summaryTotalTokens += usage.totalTokens;
+      if (costRub != null) this.summaryTotals.summaryCostRub += costRub;
+    }
+
+    this._emitStateChanged();
+  }
+
   // =====================
   // Context build
   // =====================
@@ -375,6 +553,9 @@ export class Agent {
     let tail = [];
 
     if (this.contextStrategy === "sliding_window") {
+      tail = this.history.slice(-keepLast);
+    } else if (this.contextStrategy === "sticky_facts") {
+      await this._updateFactsWithLLM(nextUserText);
       tail = this.history.slice(-keepLast);
     } else {
       // Ensure summaries exist before sending main request
@@ -387,7 +568,13 @@ export class Agent {
     const parts = [];
     parts.push(`SYSTEM: ${this.systemPreamble}`);
 
-    if (
+    if (this.contextStrategy === "sticky_facts") {
+      const factsJson = JSON.stringify(this.facts, null, 2);
+      if (factsJson && factsJson !== "{}") {
+        parts.push("STICKY FACTS (key-value memory):");
+        parts.push(factsJson);
+      }
+    } else if (
       this.contextStrategy !== "sliding_window" &&
       this.summaries.length > 0
     ) {
@@ -497,7 +684,10 @@ export class Agent {
 
     this.history.push(assistantMsg);
 
-    if (this.contextStrategy !== "sliding_window") {
+    if (
+      this.contextStrategy !== "sliding_window" &&
+      this.contextStrategy !== "sticky_facts"
+    ) {
       // After pushing new messages, we may be able to summarize older chunks for next turns
       // (async, but awaited to keep state consistent)
       await this._ensureSummariesUpToDate();

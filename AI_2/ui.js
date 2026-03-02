@@ -214,6 +214,23 @@ export function renderHistory(
   renderTotalsBar(globalTotals);
 }
 
+export function renderFactsPanel(contextStrategy, facts) {
+  const panel = $("factsPanel");
+  const content = $("factsContent");
+  if (!panel || !content) return;
+
+  if (contextStrategy !== "sticky_facts") {
+    panel.hidden = true;
+    content.textContent = "";
+    return;
+  }
+
+  panel.hidden = false;
+  const normalizedFacts =
+    facts && typeof facts === "object" && !Array.isArray(facts) ? facts : {};
+  content.textContent = JSON.stringify(normalizedFacts, null, 2);
+}
+
 export function setBusy(isBusy) {
   const ids = [
     "send",
