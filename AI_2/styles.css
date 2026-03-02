@@ -24,7 +24,7 @@ body {
 /* ===================== LAYOUT ===================== */
 
 .app {
-  max-width: 1100px;
+  max-width: 1360px;
   margin: 0 auto;
   height: 100%;
   display: grid;
