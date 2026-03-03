@@ -13,6 +13,146 @@ function normalizeContextStrategy(value) {
 }
 
 export class Agent {
+  static makeDefaultLongTermMemory() {
+    return {
+      profile: {
+        name: null,
+        language: "ru",
+        role: null,
+      },
+      preferences: {
+        verbosity: "normal",
+        format: ["structured"],
+      },
+      facts: [],
+      stable_decisions: [],
+    };
+  }
+
+  static makeDefaultWorkingMemory() {
+    return {
+      task: {
+        goal: null,
+        constraints: [],
+        entities: {},
+        decisions: [],
+        open_questions: [],
+        artifacts: [],
+      },
+    };
+  }
+
+  static normalizeLongTermMemory(value) {
+    const base = Agent.makeDefaultLongTermMemory();
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return base;
+    }
+
+    const profileRaw =
+      value.profile && typeof value.profile === "object" && !Array.isArray(value.profile)
+        ? value.profile
+        : {};
+    const preferencesRaw =
+      value.preferences &&
+      typeof value.preferences === "object" &&
+      !Array.isArray(value.preferences)
+        ? value.preferences
+        : {};
+
+    const normalizeStringArray = (arr) =>
+      Array.from(
+        new Set(
+          (Array.isArray(arr) ? arr : [])
+            .filter((x) => typeof x === "string")
+            .map((x) => x.trim())
+            .filter(Boolean),
+        ),
+      );
+
+    return {
+      profile: {
+        name:
+          typeof profileRaw.name === "string" && profileRaw.name.trim()
+            ? profileRaw.name.trim()
+            : null,
+        language:
+          typeof profileRaw.language === "string" && profileRaw.language.trim()
+            ? profileRaw.language.trim()
+            : base.profile.language,
+        role:
+          typeof profileRaw.role === "string" && profileRaw.role.trim()
+            ? profileRaw.role.trim()
+            : null,
+      },
+      preferences: {
+        verbosity:
+          typeof preferencesRaw.verbosity === "string" && preferencesRaw.verbosity.trim()
+            ? preferencesRaw.verbosity.trim()
+            : base.preferences.verbosity,
+        format: (() => {
+          const format = normalizeStringArray(preferencesRaw.format);
+          return format.length > 0 ? format : base.preferences.format;
+        })(),
+      },
+      facts: normalizeStringArray(value.facts),
+      stable_decisions: normalizeStringArray(value.stable_decisions),
+    };
+  }
+
+  static normalizeWorkingMemory(value) {
+    const base = Agent.makeDefaultWorkingMemory();
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return base;
+    }
+
+    const taskRaw = value.task && typeof value.task === "object" && !Array.isArray(value.task)
+      ? value.task
+      : {};
+
+    const normalizeStringArray = (arr) =>
+      Array.from(
+        new Set(
+          (Array.isArray(arr) ? arr : [])
+            .filter((x) => typeof x === "string")
+            .map((x) => x.trim())
+            .filter(Boolean),
+        ),
+      );
+
+    const rawEntities =
+      taskRaw.entities && typeof taskRaw.entities === "object" && !Array.isArray(taskRaw.entities)
+        ? taskRaw.entities
+        : {};
+    const entities = {};
+    for (const [k, v] of Object.entries(rawEntities)) {
+      if (typeof k !== "string") continue;
+      const key = k.trim();
+      if (!key) continue;
+      if (
+        typeof v === "string" ||
+        typeof v === "number" ||
+        typeof v === "boolean" ||
+        v === null
+      ) {
+        entities[key] = v;
+      }
+    }
+
+    return {
+      task: {
+        goal:
+          typeof taskRaw.goal === "string" && taskRaw.goal.trim()
+            ? taskRaw.goal.trim()
+            : null,
+        constraints: normalizeStringArray(taskRaw.constraints),
+        entities,
+        decisions: normalizeStringArray(taskRaw.decisions),
+        open_questions: normalizeStringArray(taskRaw.open_questions),
+        artifacts: normalizeStringArray(taskRaw.artifacts),
+      },
+    };
+  }
+
   constructor({ baseUrl, apiKey, model, temperature, contextStrategy }) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
@@ -25,7 +165,8 @@ export class Agent {
     // Summary chunks stored separately
     // { id, fromIndex, toIndex, at, text }
     this.summaries = [];
-    this.facts = {};
+    this.longTermMemory = Agent.makeDefaultLongTermMemory();
+    this.workingMemory = Agent.makeDefaultWorkingMemory();
 
     // Separate accounting for summarization
     this.summaryTotals = {
@@ -44,8 +185,8 @@ export class Agent {
       // NEW: summarize via cheap LLM
       summaryModel: "gpt-3.5-turbo",
       summaryTemperature: 0.2,
-      factsModel: "gpt-3.5-turbo",
-      factsTemperature: 0.1,
+      memoryModel: "gpt-3.5-turbo",
+      memoryTemperature: 0.1,
     };
 
     this.systemPreamble =
@@ -75,10 +216,19 @@ export class Agent {
     this._emitStateChanged();
   }
 
+  setLongTermMemory(value) {
+    this.longTermMemory = Agent.normalizeLongTermMemory(value);
+    this._emitStateChanged();
+  }
+
+  exportLongTermMemory() {
+    return Agent.normalizeLongTermMemory(this.longTermMemory);
+  }
+
   reset() {
     this.history = [];
     this.summaries = [];
-    this.facts = {};
+    this.workingMemory = Agent.makeDefaultWorkingMemory();
     this.summaryTotals = {
       summaryRequests: 0,
       summaryInputTokens: 0,
@@ -90,8 +240,16 @@ export class Agent {
   }
 
   exportState() {
+    const keepLast = this._slidingWindowSize();
+    const shortTermMemory = {
+      messages: this.history.slice(-keepLast).map((m) => ({
+        role: m.role,
+        content: String(m.text || ""),
+      })),
+    };
+
     return {
-      version: 4,
+      version: 5,
       savedAt: new Date().toISOString(),
       config: {
         baseUrl: this.baseUrl,
@@ -102,8 +260,9 @@ export class Agent {
       systemPreamble: this.systemPreamble,
       contextStrategy: this.contextStrategy,
       contextPolicy: this.contextPolicy,
+      workingMemory: this.workingMemory,
+      shortTermMemory,
       summaries: this.summaries,
-      facts: this.facts,
       summaryTotals: this.summaryTotals,
       history: this.history,
     };
@@ -130,6 +289,18 @@ export class Agent {
 
     if (state.contextPolicy && typeof state.contextPolicy === "object") {
       this.contextPolicy = { ...this.contextPolicy, ...state.contextPolicy };
+      if (
+        typeof this.contextPolicy.memoryModel !== "string" &&
+        typeof state.contextPolicy.factsModel === "string"
+      ) {
+        this.contextPolicy.memoryModel = state.contextPolicy.factsModel;
+      }
+      if (
+        !Number.isFinite(this.contextPolicy.memoryTemperature) &&
+        Number.isFinite(state.contextPolicy.factsTemperature)
+      ) {
+        this.contextPolicy.memoryTemperature = state.contextPolicy.factsTemperature;
+      }
     }
 
     if (Array.isArray(state.summaries)) {
@@ -144,11 +315,39 @@ export class Agent {
         }));
     }
     if (
+      state.workingMemory &&
+      typeof state.workingMemory === "object" &&
+      !Array.isArray(state.workingMemory)
+    ) {
+      this.workingMemory = Agent.normalizeWorkingMemory(state.workingMemory);
+    } else if (
       state.facts &&
       typeof state.facts === "object" &&
       !Array.isArray(state.facts)
     ) {
-      this.facts = this._toFactsObject(state.facts);
+      // Legacy fallback: map key-value facts into working.task.entities.
+      const normalized = Agent.normalizeWorkingMemory(this.workingMemory);
+      const entities = { ...normalized.task.entities };
+      for (const [k, v] of Object.entries(state.facts)) {
+        if (!k) continue;
+        if (typeof v === "string" && v.trim()) {
+          entities[k] = v.trim();
+          continue;
+        }
+        if (Array.isArray(v)) {
+          const compact = v
+            .filter((item) => typeof item === "string")
+            .map((item) => item.trim())
+            .filter(Boolean);
+          if (compact.length > 0) entities[k] = compact.join("; ");
+        }
+      }
+      this.workingMemory = {
+        task: {
+          ...normalized.task,
+          entities,
+        },
+      };
     }
 
     if (state.summaryTotals && typeof state.summaryTotals === "object") {
@@ -214,30 +413,6 @@ export class Agent {
     return Math.max(1, Number(this.contextPolicy.keepLastMessages) || 12);
   }
 
-  _toFactsObject(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return {};
-    }
-    const out = {};
-    for (const [rawKey, rawVal] of Object.entries(value)) {
-      if (typeof rawKey !== "string") continue;
-      const key = rawKey.trim();
-      if (!key || key.toLowerCase() === "recent_messages") continue;
-
-      if (typeof rawVal === "string") {
-        const t = rawVal.trim();
-        if (t) out[key] = [t];
-      } else if (Array.isArray(rawVal)) {
-        const arr = rawVal
-          .filter((x) => typeof x === "string")
-          .map((x) => x.trim())
-          .filter((x) => x.length > 0);
-        if (arr.length > 0) out[key] = Array.from(new Set(arr));
-      }
-    }
-    return out;
-  }
-
   _extractJsonObject(text) {
     const t = String(text || "").trim();
     if (!t) return null;
@@ -257,49 +432,142 @@ export class Agent {
     }
   }
 
-  _extractFactEntries(parsed) {
-    if (!parsed || typeof parsed !== "object") return [];
-
-    const entries = [];
-    const push = (k, v) => {
-      if (typeof k !== "string" || typeof v !== "string") return;
-      const key = k.trim();
-      const value = v.trim();
-      if (!key || !value || key.toLowerCase() === "recent_messages") return;
-      entries.push({ key, value });
-    };
-
-    if (Array.isArray(parsed.entries)) {
-      for (const e of parsed.entries) {
-        if (!e || typeof e !== "object") continue;
-        push(e.key, e.value);
-      }
-      return entries;
-    }
-
-    if (typeof parsed.key === "string" && typeof parsed.value === "string") {
-      push(parsed.key, parsed.value);
-      return entries;
-    }
-
-    for (const [k, v] of Object.entries(parsed)) {
-      if (typeof v === "string") {
-        push(k, v);
-      } else if (Array.isArray(v)) {
-        for (const item of v) push(k, item);
-      }
-    }
-
-    return entries;
+  _extractMemoryWritePatch(parsed) {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const root =
+      parsed.write && typeof parsed.write === "object" && !Array.isArray(parsed.write)
+        ? parsed.write
+        : parsed;
+    return root && typeof root === "object" && !Array.isArray(root) ? root : null;
   }
 
-  _mergeFactEntries(entries) {
-    const facts = this._toFactsObject(this.facts);
-    for (const e of entries) {
-      if (!facts[e.key]) facts[e.key] = [];
-      if (!facts[e.key].includes(e.value)) facts[e.key].push(e.value);
+  _pushUniqueStrings(target, values) {
+    const next = Array.isArray(target) ? [...target] : [];
+    for (const raw of Array.isArray(values) ? values : []) {
+      if (typeof raw !== "string") continue;
+      const item = raw.trim();
+      if (!item || next.includes(item)) continue;
+      next.push(item);
     }
-    this.facts = facts;
+    return next;
+  }
+
+  _mergeEntityObject(target, patch) {
+    const out =
+      target && typeof target === "object" && !Array.isArray(target)
+        ? { ...target }
+        : {};
+    const src = patch && typeof patch === "object" && !Array.isArray(patch) ? patch : {};
+    for (const [k, v] of Object.entries(src)) {
+      if (typeof k !== "string") continue;
+      const key = k.trim();
+      if (!key) continue;
+      if (
+        typeof v === "string" ||
+        typeof v === "number" ||
+        typeof v === "boolean" ||
+        v === null
+      ) {
+        out[key] = v;
+      }
+    }
+    return out;
+  }
+
+  _applyMemoryWritePatch(writePatch) {
+    if (!writePatch || typeof writePatch !== "object" || Array.isArray(writePatch)) return;
+
+    const normalizedLong = Agent.normalizeLongTermMemory(this.longTermMemory);
+    const normalizedWorking = Agent.normalizeWorkingMemory(this.workingMemory);
+
+    const workingPatch =
+      writePatch.working && typeof writePatch.working === "object" && !Array.isArray(writePatch.working)
+        ? writePatch.working
+        : {};
+    const longPatch =
+      writePatch.long_term &&
+      typeof writePatch.long_term === "object" &&
+      !Array.isArray(writePatch.long_term)
+        ? writePatch.long_term
+        : {};
+
+    const nextWorking = {
+      task: {
+        ...normalizedWorking.task,
+      },
+    };
+
+    if (
+      typeof workingPatch.set_goal === "string" &&
+      workingPatch.set_goal.trim()
+    ) {
+      nextWorking.task.goal = workingPatch.set_goal.trim();
+    }
+    nextWorking.task.constraints = this._pushUniqueStrings(
+      nextWorking.task.constraints,
+      workingPatch.add_constraints,
+    );
+    nextWorking.task.decisions = this._pushUniqueStrings(
+      nextWorking.task.decisions,
+      workingPatch.add_decisions,
+    );
+    nextWorking.task.open_questions = this._pushUniqueStrings(
+      nextWorking.task.open_questions,
+      workingPatch.add_open_questions,
+    );
+    nextWorking.task.artifacts = this._pushUniqueStrings(
+      nextWorking.task.artifacts,
+      workingPatch.add_artifacts,
+    );
+    nextWorking.task.entities = this._mergeEntityObject(
+      nextWorking.task.entities,
+      workingPatch.merge_entities,
+    );
+
+    const nextLong = {
+      ...normalizedLong,
+      profile: {
+        ...normalizedLong.profile,
+      },
+      preferences: {
+        ...normalizedLong.preferences,
+      },
+    };
+
+    if (
+      longPatch.add_profile &&
+      typeof longPatch.add_profile === "object" &&
+      !Array.isArray(longPatch.add_profile)
+    ) {
+      for (const [k, v] of Object.entries(longPatch.add_profile)) {
+        if (typeof k !== "string" || typeof v !== "string" || !v.trim()) continue;
+        nextLong.profile[k.trim()] = v.trim();
+      }
+    }
+    if (
+      longPatch.add_preferences &&
+      typeof longPatch.add_preferences === "object" &&
+      !Array.isArray(longPatch.add_preferences)
+    ) {
+      for (const [k, v] of Object.entries(longPatch.add_preferences)) {
+        if (typeof k !== "string") continue;
+        const key = k.trim();
+        if (!key) continue;
+        if (Array.isArray(v)) {
+          nextLong.preferences[key] = this._pushUniqueStrings([], v);
+        } else if (typeof v === "string" && v.trim()) {
+          nextLong.preferences[key] = v.trim();
+        }
+      }
+    }
+    nextLong.facts = this._pushUniqueStrings(nextLong.facts, longPatch.add_facts);
+    nextLong.stable_decisions = this._pushUniqueStrings(
+      nextLong.stable_decisions,
+      longPatch.add_stable_decisions,
+    );
+
+    this.workingMemory = Agent.normalizeWorkingMemory(nextWorking);
+    this.longTermMemory = Agent.normalizeLongTermMemory(nextLong);
   }
 
   // =====================
@@ -466,10 +734,9 @@ export class Agent {
     return summaryText;
   }
 
-  async _updateFactsWithLLM(nextUserText) {
-    if (!this.apiKey) throw new Error("API key пустой (нужен для facts).");
+  async _updateMemoryWithLLM(nextUserText) {
+    if (!this.apiKey) throw new Error("API key пустой (нужен для memory update).");
 
-    const currentKeys = Object.keys(this._toFactsObject(this.facts));
     const keepLast = this._slidingWindowSize();
     const recentMessages = this.history.slice(-keepLast);
     const contextBlock =
@@ -486,19 +753,19 @@ export class Agent {
         : "(empty)";
 
     const instruction =
-      `Ты извлекаешь facts из контекста и нового сообщения пользователя.\n` +
-      `Верни ТОЛЬКО JSON-объект.\n` +
+      `Ты извлекаешь изменения памяти из контекста и нового сообщения пользователя.\n` +
+      `Верни ТОЛЬКО JSON-объект строго формата:\n` +
+      `{"write":{"working":{"set_goal":null,"add_constraints":[],"add_decisions":[],"add_open_questions":[],"merge_entities":{},"add_artifacts":[]},"long_term":{"add_preferences":{},"add_facts":[],"add_profile":{},"add_stable_decisions":[]}}}\n` +
       `Правила:\n` +
-      `- Формат ответа: {"entries":[{"key":"...","value":"..."}]}\n` +
-      `- value: одна короткая строка факта.\n` +
-      `- key: тематическая категория (goal, constraints, preferences, decisions, agreements и т.п.).\n` +
-      `- Если в сообщении нет новых устойчивых фактов: {"entries":[]}\n` +
-      `- Не добавляй историю диалога и не используй ключ "recent_messages".\n` +
-      `- Не выдумывай факты.\n`;
+      `- Заполняй только то, что действительно следует из сообщения и контекста.\n` +
+      `- Если нечего менять: верни пустые массивы/объекты и null для set_goal.\n` +
+      `- Не выдумывай факты.\n` +
+      `- Пиши значения на русском, если нет явного указания на другой язык.\n`;
 
     const input =
       `SYSTEM: ${instruction}\n` +
-      `CURRENT_FACT_KEYS:\n${JSON.stringify(currentKeys)}\n` +
+      `LONG_TERM_MEMORY:\n${JSON.stringify(this.longTermMemory, null, 2)}\n` +
+      `WORKING_MEMORY:\n${JSON.stringify(this.workingMemory, null, 2)}\n` +
       `CONTEXT:\n${contextBlock}\n` +
       `USER_MESSAGE:\n${String(nextUserText || "").trim()}\n` +
       `JSON:\n`;
@@ -506,11 +773,11 @@ export class Agent {
     const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
     const body = {
       model:
-        this.contextPolicy.factsModel ||
+        this.contextPolicy.memoryModel ||
         this.contextPolicy.summaryModel ||
         "gpt-3.5-turbo",
       input,
-      temperature: Number(this.contextPolicy.factsTemperature ?? 0.1),
+      temperature: Number(this.contextPolicy.memoryTemperature ?? 0.1),
     };
 
     const resp = await fetch(url, {
@@ -524,19 +791,22 @@ export class Agent {
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
-      throw new Error(`Facts HTTP ${resp.status}: ${text || resp.statusText}`);
+      throw new Error(`Memory HTTP ${resp.status}: ${text || resp.statusText}`);
     }
 
     const dto = await resp.json();
-    const factsText = Agent.extractAnswerText(dto);
-    if (!factsText) throw new Error("Facts: пустой output_text.");
+    const memoryText = Agent.extractAnswerText(dto);
+    if (!memoryText) throw new Error("Memory: пустой output_text.");
 
-    const parsed = this._extractJsonObject(factsText);
+    const parsed = this._extractJsonObject(memoryText);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("Facts: модель вернула не JSON-объект.");
+      throw new Error("Memory: модель вернула не JSON-объект.");
     }
-    const entries = this._extractFactEntries(parsed);
-    this._mergeFactEntries(entries);
+    const writePatch = this._extractMemoryWritePatch(parsed);
+    if (!writePatch) {
+      throw new Error("Memory: модель вернула невалидный write-патч.");
+    }
+    this._applyMemoryWritePatch(writePatch);
 
     const usage = normalizeUsage(dto);
     const modelName = dto.model || body.model;
@@ -570,7 +840,6 @@ export class Agent {
     if (this.contextStrategy === "sliding_window") {
       tail = this.history.slice(-keepLast);
     } else if (this.contextStrategy === "sticky_facts") {
-      await this._updateFactsWithLLM(nextUserText);
       tail = this.history.slice(-keepLast);
     } else {
       // Ensure summaries exist before sending main request
@@ -582,21 +851,21 @@ export class Agent {
 
     const parts = [];
     parts.push(`SYSTEM: ${this.systemPreamble}`);
+    parts.push("MEMORY LAYERS:");
+    parts.push("LONG-TERM MEMORY:");
+    parts.push(JSON.stringify(this.longTermMemory, null, 2));
+    parts.push("WORKING MEMORY:");
+    parts.push(JSON.stringify(this.workingMemory, null, 2));
+    const shortTerm = {
+      messages: tail.map((m) => ({
+        role: m.role,
+        content: String(m.text || ""),
+      })),
+    };
+    parts.push("SHORT-TERM MEMORY:");
+    parts.push(JSON.stringify(shortTerm, null, 2));
 
-    if (this.contextStrategy === "sticky_facts") {
-      parts.push("CONTEXT:");
-      const factsJson = JSON.stringify(this.facts, null, 2);
-      if (factsJson && factsJson !== "{}") {
-        parts.push("STICKY FACTS (key-value memory):");
-        parts.push(factsJson);
-      }
-      if (tail.length > 0) {
-        parts.push("LAST MESSAGES:");
-        for (const m of tail) {
-          parts.push(`${m.role.toUpperCase()}: ${m.text}`);
-        }
-      }
-    } else if (
+    if (
       this.contextStrategy !== "sliding_window" &&
       this.summaries.length > 0
     ) {
@@ -625,6 +894,8 @@ export class Agent {
   async send(userText) {
     if (!this.apiKey) throw new Error("API key пустой.");
     if (!userText.trim()) throw new Error("Пустое сообщение.");
+
+    await this._updateMemoryWithLLM(userText);
 
     // build context with summaries
     const input = await this._buildContextInput(userText);

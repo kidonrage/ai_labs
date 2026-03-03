@@ -176,6 +176,8 @@ function normalizeBranching(rawBranching, fallbackState) {
 }
 
 function normalizeStore(raw, fallbackConfig) {
+  const normalizeLongTerm = (value) => Agent.normalizeLongTermMemory(value);
+
   if (raw && Array.isArray(raw.chats) && typeof raw.activeChatId === "string") {
     const chats = raw.chats
       .filter((c) => c && typeof c.id === "string")
@@ -199,7 +201,8 @@ function normalizeStore(raw, fallbackConfig) {
     if (chats.length > 0) {
       const hasActive = chats.some((c) => c.id === raw.activeChatId);
       return {
-        version: 2,
+        version: 3,
+        longTermMemory: normalizeLongTerm(raw.longTermMemory),
         activeChatId: hasActive ? raw.activeChatId : chats[0].id,
         chats,
       };
@@ -209,7 +212,8 @@ function normalizeStore(raw, fallbackConfig) {
   if (raw && typeof raw === "object" && Array.isArray(raw.history) && raw.config) {
     const branching = normalizeBranching(null, raw);
     return {
-      version: 2,
+      version: 3,
+      longTermMemory: normalizeLongTerm(raw.longTermMemory),
       activeChatId: "chat_1",
       chats: [
         {
@@ -236,7 +240,8 @@ function normalizeStore(raw, fallbackConfig) {
   const branching = normalizeBranching(null, initialState);
 
   return {
-    version: 2,
+    version: 3,
+    longTermMemory: normalizeLongTerm(raw && raw.longTermMemory),
     activeChatId: "chat_1",
     chats: [
       {
@@ -393,15 +398,26 @@ function bindAgentToActiveChat() {
       ? chatConfig.temperature
       : fallbackConfig.temperature,
   });
+  agent.setLongTermMemory(store.longTermMemory);
 
   agent.onStateChanged = (state) => {
     const now = new Date().toISOString();
+    const keepLast = Math.max(1, Number(state?.contextPolicy?.keepLastMessages) || 12);
+    store.longTermMemory = clonePlain(agent.exportLongTermMemory());
     activeBranch.state = clonePlain(state);
     activeBranch.updatedAt = now;
     chat.state = clonePlain(state);
     chat.updatedAt = now;
     persistStore();
-    renderFactsPanel(contextStrategy, state.facts || agent.facts || {});
+    renderFactsPanel(contextStrategy, {
+      long_term: store.longTermMemory,
+      working: state.workingMemory || agent.workingMemory,
+      short_term: state.shortTermMemory || {
+        messages: Array.isArray(state.history)
+          ? state.history.slice(-keepLast).map((m) => ({ role: m.role, content: String(m.text || "") }))
+          : [],
+      },
+    });
 
     const historyTotals = computeHistoryTotals(state.history || []);
     const globalTotals = mergeTotals(
@@ -416,7 +432,18 @@ function bindAgentToActiveChat() {
     agent.importState(branchState);
   }
   agent.setContextStrategy(contextStrategy);
-  renderFactsPanel(contextStrategy, agent.facts || {});
+  renderFactsPanel(contextStrategy, {
+    long_term: store.longTermMemory,
+    working: agent.workingMemory,
+    short_term: {
+      messages: (() => {
+        const keepLast = Math.max(1, Number(agent.contextPolicy.keepLastMessages) || 12);
+        return Array.isArray(agent.history)
+          ? agent.history.slice(-keepLast).map((m) => ({ role: m.role, content: String(m.text || "") }))
+          : [];
+      })(),
+    },
+  });
 
   if (branchState && branchState.config) {
     if (typeof branchState.config.baseUrl === "string") {
