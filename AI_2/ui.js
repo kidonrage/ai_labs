@@ -214,21 +214,17 @@ export function renderHistory(
   renderTotalsBar(globalTotals);
 }
 
-export function renderFactsPanel(contextStrategy, facts) {
+export function renderFactsPanel(contextStrategy, memoryLayers) {
   const panel = $("factsPanel");
   const content = $("factsContent");
   if (!panel || !content) return;
 
-  if (contextStrategy !== "sticky_facts") {
-    panel.hidden = true;
-    content.textContent = "";
-    return;
-  }
-
   panel.hidden = false;
-  const normalizedFacts =
-    facts && typeof facts === "object" && !Array.isArray(facts) ? facts : {};
-  content.textContent = JSON.stringify(normalizedFacts, null, 2);
+  const normalized =
+    memoryLayers && typeof memoryLayers === "object" && !Array.isArray(memoryLayers)
+      ? memoryLayers
+      : {};
+  content.textContent = JSON.stringify(normalized, null, 2);
 }
 
 export function setBusy(isBusy) {
@@ -236,9 +232,11 @@ export function setBusy(isBusy) {
     "send",
     "newChat",
     "branchChat",
+    "profileMenuCreate",
     "renameChat",
     "deleteChat",
     "chatSelect",
+    "profileMenuTrigger",
     "input",
     "model",
     "temperature",
@@ -248,6 +246,11 @@ export function setBusy(isBusy) {
   for (const id of ids) {
     const el = $(id);
     if (el) el.disabled = isBusy;
+  }
+
+  const profileActionButtons = document.querySelectorAll("[data-profile-action]");
+  for (const btn of profileActionButtons) {
+    if (btn instanceof HTMLButtonElement) btn.disabled = isBusy;
   }
 
   $("send").textContent = isBusy ? "Sending…" : "Send";

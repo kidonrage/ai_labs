@@ -10,11 +10,24 @@
     <div class="app">
       <header class="topbar">
         <div class="title">
-          <div class="h1">Simple Agent Chat</div>
-          <div class="h2">HTML • CSS • JS (modules)</div>
+          <div>
+            <div class="h1">Simple Agent Chat</div>
+            <div class="h2">HTML • CSS • JS (modules)</div>
+          </div>
+
+          <details id="profileMenu" class="profile-menu">
+            <summary id="profileMenuTrigger">Профиль</summary>
+            <div class="profile-menu-panel">
+              <div id="profileMenuList" class="profile-menu-list"></div>
+              <button id="profileMenuCreate" class="btn secondary" type="button">
+                Создать новый профиль
+              </button>
+            </div>
+          </details>
         </div>
 
         <div class="controls">
+          <div class="controls-fields">
           <label class="field">
             <span>Base URL</span>
             <input id="baseUrl" type="text" value="https://api.proxyapi.ru" />
@@ -50,7 +63,9 @@
             <span>Стратегия активного чата</span>
             <input id="activeChatContextStrategy" type="text" readonly />
           </label>
+          </div>
 
+          <div class="controls-actions">
           <button id="newChat" class="btn secondary" type="button">
             Новый чат
           </button>
@@ -66,12 +81,13 @@
           <button id="deleteChat" class="btn danger" type="button">
             Удалить чат
           </button>
+          </div>
         </div>
       </header>
 
       <main class="chat">
         <details id="factsPanel" class="facts-panel" hidden>
-          <summary>Facts (Key-Value Memory)</summary>
+          <summary>Memory Layers (long/working/short)</summary>
           <pre id="factsContent"></pre>
         </details>
         <div id="messages" class="messages" aria-live="polite"></div>
