@@ -12,6 +12,60 @@ function normalizeContextStrategy(value) {
   return CONTEXT_STRATEGIES.has(value) ? value : DEFAULT_CONTEXT_STRATEGY;
 }
 
+function normalizeUserProfile(profile) {
+  const raw = profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {};
+  const prefsRaw =
+    raw.preferences && typeof raw.preferences === "object" && !Array.isArray(raw.preferences)
+      ? raw.preferences
+      : {};
+  const normalizeString = (v) => (typeof v === "string" && v.trim() ? v.trim() : "");
+  const constraints = Array.from(
+    new Set(
+      (Array.isArray(prefsRaw.constraints) ? prefsRaw.constraints : [])
+        .filter((x) => typeof x === "string")
+        .map((x) => x.trim())
+        .filter(Boolean),
+    ),
+  );
+
+  return {
+    id: normalizeString(raw.id) || null,
+    name: normalizeString(raw.name) || "Стандартный",
+    preferences: {
+      style: normalizeString(prefsRaw.style) || "Кратко и по делу.",
+      format: normalizeString(prefsRaw.format) || "Структурированный текст.",
+      constraints,
+    },
+  };
+}
+
+function buildProfilePriorityInstructions(userProfile) {
+  const p = normalizeUserProfile(userProfile);
+  const constraints = Array.isArray(p.preferences.constraints)
+    ? p.preferences.constraints
+    : [];
+  const lines = [
+    "PROFILE DIRECTIVES (HIGH PRIORITY):",
+    "These directives have higher priority than all non-safety user preferences in chat history.",
+    "You MUST follow them when generating the final answer.",
+    `- Profile name: ${p.name}`,
+    `- Required style: ${p.preferences.style}`,
+    `- Required output format: ${p.preferences.format}`,
+  ];
+  if (constraints.length > 0) {
+    lines.push("- Hard constraints:");
+    for (const c of constraints) {
+      lines.push(`  - ${c}`);
+    }
+  } else {
+    lines.push("- Hard constraints: (none)");
+  }
+  lines.push(
+    "If there is a conflict between these directives and a user's latest request, ask a short clarification question.",
+  );
+  return lines.join("\n");
+}
+
 export class Agent {
   static makeDefaultLongTermMemory() {
     return {
@@ -167,6 +221,7 @@ export class Agent {
     this.summaries = [];
     this.longTermMemory = Agent.makeDefaultLongTermMemory();
     this.workingMemory = Agent.makeDefaultWorkingMemory();
+    this.userProfile = normalizeUserProfile(null);
 
     // Separate accounting for summarization
     this.summaryTotals = {
@@ -221,6 +276,11 @@ export class Agent {
     this._emitStateChanged();
   }
 
+  setUserProfile(profile) {
+    this.userProfile = normalizeUserProfile(profile);
+    this._emitStateChanged();
+  }
+
   exportLongTermMemory() {
     return Agent.normalizeLongTermMemory(this.longTermMemory);
   }
@@ -260,6 +320,7 @@ export class Agent {
       systemPreamble: this.systemPreamble,
       contextStrategy: this.contextStrategy,
       contextPolicy: this.contextPolicy,
+      userProfile: this.userProfile,
       workingMemory: this.workingMemory,
       shortTermMemory,
       summaries: this.summaries,
@@ -276,6 +337,9 @@ export class Agent {
     }
     if (typeof state.contextStrategy === "string") {
       this.contextStrategy = normalizeContextStrategy(state.contextStrategy);
+    }
+    if (state.userProfile && typeof state.userProfile === "object") {
+      this.userProfile = normalizeUserProfile(state.userProfile);
     }
 
     if (state.config && typeof state.config === "object") {
@@ -764,6 +828,7 @@ export class Agent {
 
     const input =
       `SYSTEM: ${instruction}\n` +
+      `ACTIVE USER PROFILE:\n${JSON.stringify(this.userProfile, null, 2)}\n` +
       `LONG_TERM_MEMORY:\n${JSON.stringify(this.longTermMemory, null, 2)}\n` +
       `WORKING_MEMORY:\n${JSON.stringify(this.workingMemory, null, 2)}\n` +
       `CONTEXT:\n${contextBlock}\n` +
@@ -851,6 +916,9 @@ export class Agent {
 
     const parts = [];
     parts.push(`SYSTEM: ${this.systemPreamble}`);
+    parts.push(buildProfilePriorityInstructions(this.userProfile));
+    parts.push("ACTIVE USER PROFILE:");
+    parts.push(JSON.stringify(this.userProfile, null, 2));
     parts.push("MEMORY LAYERS:");
     parts.push("LONG-TERM MEMORY:");
     parts.push(JSON.stringify(this.longTermMemory, null, 2));

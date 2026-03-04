@@ -232,9 +232,11 @@ export function setBusy(isBusy) {
     "send",
     "newChat",
     "branchChat",
+    "profileMenuCreate",
     "renameChat",
     "deleteChat",
     "chatSelect",
+    "profileMenuTrigger",
     "input",
     "model",
     "temperature",
@@ -244,6 +246,11 @@ export function setBusy(isBusy) {
   for (const id of ids) {
     const el = $(id);
     if (el) el.disabled = isBusy;
+  }
+
+  const profileActionButtons = document.querySelectorAll("[data-profile-action]");
+  for (const btn of profileActionButtons) {
+    if (btn instanceof HTMLButtonElement) btn.disabled = isBusy;
   }
 
   $("send").textContent = isBusy ? "Sending…" : "Send";
