@@ -90,6 +90,35 @@
           <summary>Memory Layers (long/working/short)</summary>
           <pre id="factsContent"></pre>
         </details>
+        <section id="taskStatusPanel" class="task-status-panel" aria-live="polite">
+          <div class="task-status-head">
+            <div class="task-status-title">Task Status</div>
+            <div id="taskPausedBadge" class="task-paused-badge" hidden>Paused</div>
+          </div>
+          <div class="task-status-grid">
+            <div class="task-status-item">
+              <span>Stage</span>
+              <strong id="taskStage">idle</strong>
+            </div>
+            <div class="task-status-item">
+              <span>Step</span>
+              <strong id="taskStep">0</strong>
+            </div>
+            <div class="task-status-item">
+              <span>Expected action</span>
+              <strong id="taskExpectedAction">null</strong>
+            </div>
+            <div class="task-status-item">
+              <span>Paused from</span>
+              <strong id="taskPausedFrom">—</strong>
+            </div>
+          </div>
+          <div class="task-status-actions">
+            <button id="pauseTask" class="btn secondary" type="button">Pause</button>
+            <button id="continueTask" class="btn secondary" type="button">Continue</button>
+            <span class="task-start-hint">Start Task: <code>start: ...</code></span>
+          </div>
+        </section>
         <div id="messages" class="messages" aria-live="polite"></div>
       </main>
 

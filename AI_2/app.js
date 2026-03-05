@@ -5,9 +5,9 @@ import {
   addMessage,
   renderHistory,
   renderFactsPanel,
+  renderTaskStatus,
   renderTotalsBar,
   setBusy,
-  messageStatsLines,
 } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
@@ -330,6 +330,7 @@ let activeChatId = store.activeChatId;
 let activeProfileId = store.activeProfileId;
 let agent = null;
 let defaultNewChatStrategy = DEFAULT_CONTEXT_STRATEGY;
+let isSending = false;
 
 function persistStore() {
   store.activeChatId = activeChatId;
@@ -518,9 +519,10 @@ function bindAgentToActiveChat() {
     const now = new Date().toISOString();
     const keepLast = Math.max(1, Number(state?.contextPolicy?.keepLastMessages) || 12);
     store.longTermMemory = clonePlain(agent.exportLongTermMemory());
-    activeBranch.state = clonePlain(state);
+    const persistedState = clonePlain(agent.persistState());
+    activeBranch.state = persistedState;
     activeBranch.updatedAt = now;
-    chat.state = clonePlain(state);
+    chat.state = persistedState;
     chat.updatedAt = now;
     persistStore();
     renderFactsPanel(contextStrategy, {
@@ -539,11 +541,12 @@ function bindAgentToActiveChat() {
       state.summaryTotals || agent.summaryTotals,
     );
     renderTotalsBar(globalTotals);
+    renderTaskStatus(state.taskState, { isBusy: isSending });
     renderBranchingControls();
   };
 
   if (branchState) {
-    agent.importState(branchState);
+    agent.loadState(branchState);
   }
   agent.setContextStrategy(contextStrategy);
   renderFactsPanel(contextStrategy, {
@@ -586,6 +589,7 @@ function bindAgentToActiveChat() {
     renderTotalsBar(mergeTotals(defaultTotals(), agent.summaryTotals));
   }
 
+  renderTaskStatus(agent.taskState, { isBusy: isSending });
   renderBranchingControls();
 }
 
@@ -939,9 +943,127 @@ function syncAgentConfig() {
   });
 }
 
+function parseTaskCommand(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return null;
+  const startMatch = /^start:\s*(.*)$/i.exec(trimmed);
+  if (startMatch) {
+    const goal = startMatch[1].trim();
+    if (!goal) return { type: "start_empty" };
+    return { type: "start", goal };
+  }
+  if (/^pause$/i.test(trimmed)) return { type: "pause" };
+  if (/^continue$/i.test(trimmed)) return { type: "continue" };
+  if (/^reset task$/i.test(trimmed)) return { type: "reset_task" };
+  return null;
+}
+
+function isActiveTaskStage(stage) {
+  return stage === "planning" || stage === "execution" || stage === "validation";
+}
+
+function pushAssistantMessage(text) {
+  if (!agent) return;
+  agent.history.push({
+    role: "assistant",
+    text: String(text || ""),
+    at: new Date().toISOString(),
+  });
+  agent._emitStateChanged();
+}
+
+function pushStageChangedMessage(transition) {
+  if (!transition || transition.from === transition.to) return;
+  pushAssistantMessage(`Task stage changed: ${transition.from} -> ${transition.to}`);
+}
+
+async function handleTaskCommandOrStep(text) {
+  if (!agent) return false;
+  const command = parseTaskCommand(text);
+  const taskState = agent.taskState || {};
+  const stage = typeof taskState.stage === "string" ? taskState.stage : "idle";
+
+  if (command && command.type === "start") {
+    const prevStage = stage;
+    agent.startTask(command.goal);
+    pushStageChangedMessage({ from: prevStage, to: "planning" });
+    const result = await agent.runTaskStep({ userMessage: text });
+    pushStageChangedMessage(result.transition);
+    pushAssistantMessage(result.text);
+    return true;
+  }
+
+  if (command && command.type === "start_empty") {
+    pushAssistantMessage("Формат команды: start: <описание задачи>");
+    return true;
+  }
+
+  if (command && command.type === "pause") {
+    const ok = agent.pauseTask();
+    if (!ok) {
+      pushAssistantMessage("Пауза недоступна: нет активного шага planning/execution/validation.");
+      return true;
+    }
+    pushStageChangedMessage({ from: stage, to: "paused" });
+    pushAssistantMessage("Задача поставлена на паузу.");
+    return true;
+  }
+
+  if (command && command.type === "continue") {
+    const pausedFrom = taskState && taskState.pausedFrom ? taskState.pausedFrom : null;
+    const resumed = agent.continueTask();
+    if (!resumed) {
+      pushAssistantMessage("Продолжение недоступно: задача не на паузе.");
+      return true;
+    }
+    const resumedState = agent.taskState || {};
+    pushStageChangedMessage({ from: "paused", to: resumedState.stage || "idle" });
+    if (isActiveTaskStage(resumedState.stage)) {
+      const result = await agent.runTaskStep({ userMessage: text });
+      pushStageChangedMessage(result.transition);
+      pushAssistantMessage(result.text);
+    } else {
+      pushAssistantMessage(
+        pausedFrom
+          ? `Продолжение выполнено. Восстановлен этап ${pausedFrom.stage}, шаг ${pausedFrom.step}.`
+          : "Продолжение выполнено.",
+      );
+    }
+    return true;
+  }
+
+  if (command && command.type === "reset_task") {
+    const fromStage = stage;
+    agent.resetTask();
+    pushStageChangedMessage({ from: fromStage, to: "idle" });
+    pushAssistantMessage("Task state сброшен в idle, артефакты очищены.");
+    return true;
+  }
+
+  if (stage === "paused") {
+    pushAssistantMessage("Задача на паузе. Используйте continue или кнопку Continue.");
+    return true;
+  }
+
+  if (isActiveTaskStage(stage)) {
+    const result = await agent.runTaskStep({ userMessage: text });
+    pushStageChangedMessage(result.transition);
+    pushAssistantMessage(result.text);
+    return true;
+  }
+
+  return false;
+}
+
+async function sendTaskControlCommand(commandText) {
+  if (!agent || isSending) return;
+  $("input").value = commandText;
+  await handleSend();
+}
+
 async function handleSend() {
   const text = $("input").value;
-  if (!text.trim() || !agent) return;
+  if (!text.trim() || !agent || isSending) return;
 
   syncAgentConfig();
 
@@ -962,6 +1084,7 @@ async function handleSend() {
   $("input").value = "";
   $("input").focus();
 
+  isSending = true;
   setBusy(true);
 
   const typing = document.createElement("div");
@@ -976,11 +1099,16 @@ async function handleSend() {
   $("messages").appendChild(typing);
   $("messages").scrollTop = $("messages").scrollHeight;
 
+  let handedByTaskMachine = false;
+  let poppedForRegularSend = false;
   try {
-    agent.history.pop();
-    agent._emitStateChanged();
-
-    await agent.send(text);
+    handedByTaskMachine = await handleTaskCommandOrStep(text);
+    if (!handedByTaskMachine) {
+      agent.history.pop();
+      poppedForRegularSend = true;
+      agent._emitStateChanged();
+      await agent.send(text);
+    }
 
     typing.remove();
     const activeChat = getActiveChat();
@@ -991,25 +1119,25 @@ async function handleSend() {
   } catch (err) {
     typing.remove();
 
-    agent.history.push(optimisticUser);
-    agent._emitStateChanged();
-
-    const historyTotals = computeHistoryTotals(agent.history);
-    const globalTotals = mergeTotals(historyTotals, agent.summaryTotals);
-
-    addMessage({
+    if (poppedForRegularSend) {
+      agent.history.push(optimisticUser);
+    }
+    agent.history.push({
       role: "assistant",
       text: `Ошибка: ${err && err.message ? err.message : String(err)}`,
-      meta: {
-        statsLines: messageStatsLines(
-          { role: "assistant", text: "" },
-        ),
-      },
+      at: new Date().toISOString(),
     });
+    agent._emitStateChanged();
 
-    renderTotalsBar(globalTotals);
+    const activeChat = getActiveChat();
+    renderHistory(agent.history, agent.summaryTotals, agent.summaries, {
+      contextStrategy: normalizeContextStrategy(activeChat && activeChat.contextStrategy),
+      keepLastMessages: agent.contextPolicy.keepLastMessages,
+    });
   } finally {
+    isSending = false;
     setBusy(false);
+    renderTaskStatus(agent.taskState, { isBusy: isSending });
     renderChatSelector();
     renderBranchingControls();
   }
@@ -1043,6 +1171,14 @@ $("input").addEventListener("keydown", (e) => {
     e.preventDefault();
     handleSend();
   }
+});
+
+$("pauseTask").addEventListener("click", async () => {
+  await sendTaskControlCommand("pause");
+});
+
+$("continueTask").addEventListener("click", async () => {
+  await sendTaskControlCommand("continue");
 });
 
 $("newChat").addEventListener("click", async () => {

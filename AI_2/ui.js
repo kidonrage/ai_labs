@@ -227,6 +227,50 @@ export function renderFactsPanel(contextStrategy, memoryLayers) {
   content.textContent = JSON.stringify(normalized, null, 2);
 }
 
+export function renderTaskStatus(taskState, options = {}) {
+  const stageEl = $("taskStage");
+  const stepEl = $("taskStep");
+  const expectedEl = $("taskExpectedAction");
+  const pausedFromEl = $("taskPausedFrom");
+  const pausedBadge = $("taskPausedBadge");
+  const pauseBtn = $("pauseTask");
+  const continueBtn = $("continueTask");
+  const panel = $("taskStatusPanel");
+  if (!stageEl || !stepEl || !expectedEl || !pausedFromEl || !pausedBadge || !pauseBtn || !continueBtn || !panel) {
+    return;
+  }
+
+  const raw = taskState && typeof taskState === "object" && !Array.isArray(taskState)
+    ? taskState
+    : {};
+  const stage = typeof raw.stage === "string" ? raw.stage : "idle";
+  const step = Number.isFinite(raw.step) ? raw.step : 0;
+  const expectedAction =
+    typeof raw.expectedAction === "string" && raw.expectedAction.trim()
+      ? raw.expectedAction
+      : "null";
+  const pausedFrom = raw.pausedFrom && typeof raw.pausedFrom === "object" && !Array.isArray(raw.pausedFrom)
+    ? raw.pausedFrom
+    : null;
+  const pausedFromText =
+    pausedFrom && typeof pausedFrom.stage === "string" && Number.isFinite(pausedFrom.step)
+      ? `${pausedFrom.stage} (step ${pausedFrom.step})`
+      : "—";
+  const isBusy = Boolean(options && options.isBusy);
+  const canPause =
+    stage === "planning" || stage === "execution" || stage === "validation";
+  const canContinue = stage === "paused";
+
+  stageEl.textContent = stage;
+  stepEl.textContent = String(step);
+  expectedEl.textContent = expectedAction;
+  pausedFromEl.textContent = pausedFromText;
+  pausedBadge.hidden = stage !== "paused";
+
+  pauseBtn.disabled = isBusy || !canPause;
+  continueBtn.disabled = isBusy || !canContinue;
+}
+
 export function setBusy(isBusy) {
   const ids = [
     "send",
@@ -241,6 +285,8 @@ export function setBusy(isBusy) {
     "model",
     "temperature",
     "baseUrl",
+    "pauseTask",
+    "continueTask",
   ];
 
   for (const id of ids) {
