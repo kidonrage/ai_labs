@@ -1,5 +1,14 @@
 import { OpenAIModelPricing } from "./pricing.js";
 import { normalizeUsage } from "./helpers.js";
+import {
+  normalizeInvariants,
+} from "./invariants.store.js";
+import {
+  createDraftPlan as createInvariantDraftPlan,
+  checkInvariantConflicts as runInvariantChecker,
+  normalizeInvariantCheck,
+} from "./invariant-checker.js";
+import { formatInvariantRefusal as buildInvariantRefusalText } from "./refusal-formatter.js";
 
 const DEFAULT_CONTEXT_STRATEGY = "sticky_facts";
 const CONTEXT_STRATEGIES = new Set([
@@ -67,6 +76,10 @@ function buildProfilePriorityInstructions(userProfile) {
 }
 
 export class Agent {
+  static makeDefaultInvariants() {
+    return normalizeInvariants(null);
+  }
+
   static makeDefaultLongTermMemory() {
     return {
       profile: {
@@ -287,6 +300,8 @@ export class Agent {
     this.longTermMemory = Agent.makeDefaultLongTermMemory();
     this.workingMemory = Agent.makeDefaultWorkingMemory();
     this.taskState = Agent.makeDefaultTaskState();
+    this.invariants = Agent.makeDefaultInvariants();
+    this.lastInvariantCheck = null;
     this.userProfile = normalizeUserProfile(null);
 
     // Separate accounting for summarization
@@ -312,6 +327,14 @@ export class Agent {
 
     this.systemPreamble =
       "Ты полезный ассистент. Отвечай кратко и по делу, если не просят иначе.";
+    this.plannerPrompt =
+      "Собери короткий draft-план ответа на запрос, учитывая memory/task state/invariants.";
+    this.invariantCheckerPrompt =
+      "Проверь draft-план и запрос на конфликты с инвариантами. Любой конфликт означает отказ.";
+    this.finalResponderPrompt =
+      "Сформируй финальный ответ только в рамках инвариантов и активного профиля пользователя.";
+    this.refusalPrompt =
+      "При конфликте дай отказ, назови нарушенные инварианты и предложи безопасную альтернативу.";
 
     this.onStateChanged = null;
 
@@ -342,6 +365,11 @@ export class Agent {
     this._emitStateChanged();
   }
 
+  setInvariants(value) {
+    this.invariants = normalizeInvariants(value, { mergeWithDefaults: false });
+    this._emitStateChanged();
+  }
+
   setUserProfile(profile) {
     this.userProfile = normalizeUserProfile(profile);
     this._emitStateChanged();
@@ -351,11 +379,16 @@ export class Agent {
     return Agent.normalizeLongTermMemory(this.longTermMemory);
   }
 
+  exportInvariants() {
+    return normalizeInvariants(this.invariants, { mergeWithDefaults: false });
+  }
+
   reset() {
     this.history = [];
     this.summaries = [];
     this.workingMemory = Agent.makeDefaultWorkingMemory();
     this.taskState = Agent.makeDefaultTaskState();
+    this.lastInvariantCheck = null;
     this.summaryTotals = {
       summaryRequests: 0,
       summaryInputTokens: 0,
@@ -376,7 +409,7 @@ export class Agent {
     };
 
     return {
-      version: 6,
+      version: 7,
       savedAt: new Date().toISOString(),
       config: {
         baseUrl: this.baseUrl,
@@ -390,6 +423,8 @@ export class Agent {
       userProfile: this.userProfile,
       workingMemory: this.workingMemory,
       taskState: this.taskState,
+      invariants: this.invariants,
+      lastInvariantCheck: this.lastInvariantCheck,
       shortTermMemory,
       summaries: this.summaries,
       summaryTotals: this.summaryTotals,
@@ -488,6 +523,23 @@ export class Agent {
       !Array.isArray(state.taskState)
     ) {
       this.taskState = Agent.normalizeTaskState(state.taskState);
+    }
+
+    if (Array.isArray(state.invariants)) {
+      // Preserve per-chat invariant set exactly as saved (including deletions).
+      this.invariants = normalizeInvariants(state.invariants, {
+        mergeWithDefaults: false,
+      });
+    }
+
+    if (
+      state.lastInvariantCheck &&
+      typeof state.lastInvariantCheck === "object" &&
+      !Array.isArray(state.lastInvariantCheck)
+    ) {
+      this.lastInvariantCheck = normalizeInvariantCheck(state.lastInvariantCheck);
+    } else {
+      this.lastInvariantCheck = null;
     }
 
     if (state.summaryTotals && typeof state.summaryTotals === "object") {
@@ -633,6 +685,46 @@ export class Agent {
   resetTask() {
     this.taskState = Agent.makeDefaultTaskState();
     this._emitStateChanged();
+  }
+
+  buildAgentContext(userRequest = "") {
+    return {
+      userRequest: String(userRequest || "").trim(),
+      memory: {
+        longTerm: Agent.normalizeLongTermMemory(this.longTermMemory),
+        working: Agent.normalizeWorkingMemory(this.workingMemory),
+      },
+      taskState: Agent.normalizeTaskState(this.taskState),
+      invariants: normalizeInvariants(this.invariants, { mergeWithDefaults: false }),
+    };
+  }
+
+  createDraftPlan(agentContext) {
+    return createInvariantDraftPlan(agentContext);
+  }
+
+  checkInvariantConflicts(agentContext, draftPlan) {
+    const ctx =
+      agentContext && typeof agentContext === "object" && !Array.isArray(agentContext)
+        ? agentContext
+        : this.buildAgentContext("");
+    return runInvariantChecker({
+      request: ctx.userRequest,
+      draftPlan,
+      taskState: ctx.taskState,
+      invariants: ctx.invariants,
+    });
+  }
+
+  formatInvariantRefusal(checkResult) {
+    return buildInvariantRefusalText(checkResult);
+  }
+
+  _computeInvariantDecision(userRequest = "") {
+    const agentContext = this.buildAgentContext(userRequest);
+    const draftPlan = this.createDraftPlan(agentContext);
+    const invariantCheck = this.checkInvariantConflicts(agentContext, draftPlan);
+    return { agentContext, draftPlan, invariantCheck };
   }
 
   _extractJsonObject(text) {
@@ -978,6 +1070,8 @@ export class Agent {
     parts.push(`PLAN: ${artifacts.plan || "(empty)"}`);
     parts.push(`DRAFT: ${artifacts.draft || "(empty)"}`);
     parts.push(`VALIDATION: ${artifacts.validation || "(empty)"}`);
+    parts.push("INVARIANTS:");
+    parts.push(JSON.stringify(this.invariants, null, 2));
     if (userHint) {
       parts.push(`USER_HINT: ${userHint}`);
     }
@@ -1004,6 +1098,8 @@ export class Agent {
     parts.push(`PLAN: ${artifacts.plan || "(empty)"}`);
     parts.push(`DRAFT_BEFORE_FIX: ${artifacts.draft || "(empty)"}`);
     parts.push(`VALIDATION_REVIEW: ${validationText || "(empty)"}`);
+    parts.push("INVARIANTS:");
+    parts.push(JSON.stringify(this.invariants, null, 2));
     parts.push(`USER_REMARKS: ${userRemarks || "(empty)"}`);
     parts.push("INSTRUCTION: Верни только поле final с итоговым текстом.");
     parts.push("ASSISTANT:");
@@ -1045,6 +1141,21 @@ export class Agent {
 
     if (!["planning", "execution", "validation"].includes(stage)) {
       throw new Error("Нет активного шага задачи для выполнения.");
+    }
+
+    const userHint = typeof context.userMessage === "string" ? context.userMessage.trim() : "";
+    const invariantInput = userHint || (state.artifacts && state.artifacts.userGoal) || "";
+    if (invariantInput) {
+      const decision = this._computeInvariantDecision(invariantInput);
+      this.lastInvariantCheck = decision.invariantCheck;
+      this._emitStateChanged();
+      if (decision.invariantCheck.conflict) {
+        return {
+          text: this.formatInvariantRefusal(decision.invariantCheck),
+          transition: { from: stage, to: stage },
+          invariantCheck: decision.invariantCheck,
+        };
+      }
     }
 
     const answerText = await this._runTaskLLMStep(
@@ -1123,6 +1234,7 @@ export class Agent {
       `ACTIVE USER PROFILE:\n${JSON.stringify(this.userProfile, null, 2)}\n` +
       `LONG_TERM_MEMORY:\n${JSON.stringify(this.longTermMemory, null, 2)}\n` +
       `WORKING_MEMORY:\n${JSON.stringify(this.workingMemory, null, 2)}\n` +
+      `INVARIANTS:\n${JSON.stringify(this.invariants, null, 2)}\n` +
       `CONTEXT:\n${contextBlock}\n` +
       `USER_MESSAGE:\n${String(nextUserText || "").trim()}\n` +
       `JSON:\n`;
@@ -1190,7 +1302,7 @@ export class Agent {
   // Context build
   // =====================
 
-  async _buildContextInput(nextUserText) {
+  async _buildContextInput(nextUserText, runtimeContext = null) {
     const keepLast = this._slidingWindowSize();
     let tail = [];
 
@@ -1208,6 +1320,10 @@ export class Agent {
 
     const parts = [];
     parts.push(`SYSTEM: ${this.systemPreamble}`);
+    parts.push(`PLANNER PROMPT: ${this.plannerPrompt}`);
+    parts.push(`INVARIANT CHECKER PROMPT: ${this.invariantCheckerPrompt}`);
+    parts.push(`FINAL RESPONDER PROMPT: ${this.finalResponderPrompt}`);
+    parts.push(`REFUSAL MODE PROMPT: ${this.refusalPrompt}`);
     parts.push(buildProfilePriorityInstructions(this.userProfile));
     parts.push("ACTIVE USER PROFILE:");
     parts.push(JSON.stringify(this.userProfile, null, 2));
@@ -1218,6 +1334,21 @@ export class Agent {
     parts.push(JSON.stringify(this.workingMemory, null, 2));
     parts.push("TASK STATE:");
     parts.push(JSON.stringify(this.taskState, null, 2));
+    parts.push("INVARIANTS:");
+    parts.push(JSON.stringify(this.invariants, null, 2));
+
+    if (runtimeContext && typeof runtimeContext === "object" && !Array.isArray(runtimeContext)) {
+      const draftPlan = runtimeContext.draftPlan || null;
+      const invariantCheck = runtimeContext.invariantCheck || null;
+      if (draftPlan) {
+        parts.push("DRAFT PLAN:");
+        parts.push(JSON.stringify(draftPlan, null, 2));
+      }
+      if (invariantCheck) {
+        parts.push("INVARIANT CHECK RESULT:");
+        parts.push(JSON.stringify(invariantCheck, null, 2));
+      }
+    }
     const shortTerm = {
       messages: tail.map((m) => ({
         role: m.role,
@@ -1249,28 +1380,16 @@ export class Agent {
     return parts.join("\n");
   }
 
-  // =====================
-  // Main send (chat request)
-  // =====================
-
-  async send(userText) {
-    if (!this.apiKey) throw new Error("API key пустой.");
-    if (!userText.trim()) throw new Error("Пустое сообщение.");
-
-    await this._updateMemoryWithLLM(userText);
-
-    // build context with summaries
-    const input = await this._buildContextInput(userText);
-
-    // 1) add user message to history
-    const userMsg = {
-      role: "user",
-      text: userText,
-      at: new Date().toISOString(),
-    };
-    this.history.push(userMsg);
-    this._emitStateChanged();
-
+  async generateFinalResponse({
+    userText,
+    userMsg,
+    draftPlan,
+    invariantCheck,
+  }) {
+    const input = await this._buildContextInput(userText, {
+      draftPlan,
+      invariantCheck,
+    });
     const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
     const body = {
       model: this.model,
@@ -1293,19 +1412,15 @@ export class Agent {
     }
 
     const dto = await resp.json();
-
     const answerText = Agent.extractAnswerText(dto);
     if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
 
     const usage = normalizeUsage(dto);
-
     const durationSeconds =
       Number.isFinite(dto.created_at) && Number.isFinite(dto.completed_at)
         ? dto.completed_at - dto.created_at
         : null;
-
     const modelName = dto.model || this.model;
-
     const costRub = usage
       ? OpenAIModelPricing.costRub(
           modelName,
@@ -1314,8 +1429,7 @@ export class Agent {
         )
       : null;
 
-    // attach request stats to user message
-    if (usage) {
+    if (usage && userMsg) {
       userMsg.model = modelName;
       userMsg.requestInputTokens = usage.inputTokens;
       userMsg.requestOutputTokens = usage.outputTokens;
@@ -1336,15 +1450,12 @@ export class Agent {
       costRub: costRub != null ? costRub : undefined,
       durationSeconds: durationSeconds != null ? durationSeconds : undefined,
     };
-
     this.history.push(assistantMsg);
 
     if (
       this.contextStrategy !== "sliding_window" &&
       this.contextStrategy !== "sticky_facts"
     ) {
-      // After pushing new messages, we may be able to summarize older chunks for next turns
-      // (async, but awaited to keep state consistent)
       await this._ensureSummariesUpToDate();
     }
 
@@ -1356,7 +1467,58 @@ export class Agent {
       usage,
       durationSeconds,
       costRub,
+      invariantCheck,
+      refused: false,
     };
+  }
+
+  // =====================
+  // Main send (chat request)
+  // =====================
+
+  async send(userText) {
+    if (!this.apiKey) throw new Error("API key пустой.");
+    if (!userText.trim()) throw new Error("Пустое сообщение.");
+
+    await this._updateMemoryWithLLM(userText);
+    const decision = this._computeInvariantDecision(userText);
+    this.lastInvariantCheck = decision.invariantCheck;
+
+    // 1) add user message to history
+    const userMsg = {
+      role: "user",
+      text: userText,
+      at: new Date().toISOString(),
+    };
+    this.history.push(userMsg);
+    this._emitStateChanged();
+
+    if (decision.invariantCheck.conflict) {
+      const refusalText = this.formatInvariantRefusal(decision.invariantCheck);
+      this.history.push({
+        role: "assistant",
+        text: refusalText,
+        at: new Date().toISOString(),
+        model: "invariant-guard",
+      });
+      this._emitStateChanged();
+      return {
+        answer: refusalText,
+        model: "invariant-guard",
+        usage: null,
+        durationSeconds: null,
+        costRub: null,
+        invariantCheck: decision.invariantCheck,
+        refused: true,
+      };
+    }
+
+    return this.generateFinalResponse({
+      userText,
+      userMsg,
+      draftPlan: decision.draftPlan,
+      invariantCheck: decision.invariantCheck,
+    });
   }
 
   static extractAnswerText(dto) {

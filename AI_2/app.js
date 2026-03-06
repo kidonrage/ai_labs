@@ -5,6 +5,7 @@ import {
   addMessage,
   renderHistory,
   renderFactsPanel,
+  renderInvariantPanel,
   renderTaskStatus,
   renderTotalsBar,
   setBusy,
@@ -470,6 +471,106 @@ function renderBranchingControls() {
   forkBtn.disabled = !isBranchingStrategy || cps.length === 0;
 }
 
+function renderInvariantControls() {
+  const select = $("invariantSelect");
+  const removeBtn = $("removeInvariant");
+  if (!select || !agent) return;
+
+  const invariants = Array.isArray(agent.invariants) ? agent.invariants : [];
+  const prevValue = select.value;
+  select.innerHTML = "";
+
+  for (const inv of invariants) {
+    const opt = document.createElement("option");
+    opt.value = inv.id;
+    const title = typeof inv.title === "string" && inv.title.trim() ? inv.title.trim() : inv.id;
+    opt.textContent = `${title} (${inv.id})`;
+    select.appendChild(opt);
+  }
+
+  const hasPrev = invariants.some((inv) => inv.id === prevValue);
+  if (hasPrev) {
+    select.value = prevValue;
+  } else if (invariants[0]) {
+    select.value = invariants[0].id;
+  }
+
+  if (removeBtn) {
+    removeBtn.disabled = invariants.length === 0;
+  }
+}
+
+function promptInvariantDraft() {
+  const idRaw = window.prompt("ID инварианта (латиница/подчеркивания):", "");
+  if (idRaw == null) return null;
+  const id = idRaw.trim().replace(/\s+/g, "_").toLowerCase();
+  if (!id) {
+    window.alert("ID не может быть пустым.");
+    return null;
+  }
+
+  const titleRaw = window.prompt("Название инварианта:", "");
+  if (titleRaw == null) return null;
+  const title = titleRaw.trim();
+  if (!title) {
+    window.alert("Название не может быть пустым.");
+    return null;
+  }
+
+  const ruleRaw = window.prompt("Правило инварианта:", "");
+  if (ruleRaw == null) return null;
+  const rule = ruleRaw.trim();
+  if (!rule) {
+    window.alert("Правило не может быть пустым.");
+    return null;
+  }
+
+  const typeRaw = window.prompt("Тип (technical/business/general):", "general");
+  if (typeRaw == null) return null;
+  const type = typeRaw.trim() || "general";
+
+  return {
+    id: id.slice(0, 60),
+    title: title.slice(0, 120),
+    rule: rule.slice(0, 300),
+    type: type.slice(0, 40),
+    check: {
+      forbiddenPhrases: [],
+      safeAlternative: "",
+      policy: null,
+    },
+  };
+}
+
+function addInvariant() {
+  if (!agent) return;
+  const draft = promptInvariantDraft();
+  if (!draft) return;
+
+  const current = Array.isArray(agent.invariants) ? clonePlain(agent.invariants) : [];
+  if (current.some((inv) => inv.id === draft.id)) {
+    window.alert(`Инвариант с id "${draft.id}" уже существует.`);
+    return;
+  }
+  current.push(draft);
+  agent.setInvariants(current);
+  renderInvariantControls();
+}
+
+function removeSelectedInvariant() {
+  if (!agent) return;
+  const select = $("invariantSelect");
+  if (!select || !select.value) return;
+  const id = select.value;
+  const ok = window.confirm(`Удалить инвариант "${id}"?`);
+  if (!ok) return;
+
+  const current = Array.isArray(agent.invariants) ? clonePlain(agent.invariants) : [];
+  const next = current.filter((inv) => inv && inv.id !== id);
+  agent.setInvariants(next);
+  renderInvariantControls();
+}
+
 function profileToAgentPrefs(profile) {
   if (!profile) return null;
   const constraints = Array.isArray(profile.constraints) ? profile.constraints : [];
@@ -512,14 +613,22 @@ function bindAgentToActiveChat() {
       ? chatConfig.temperature
       : fallbackConfig.temperature,
   });
-  agent.setLongTermMemory(store.longTermMemory);
-  agent.setUserProfile(profileToAgentPrefs(getActiveProfile()));
+  const boundAgent = agent;
 
-  agent.onStateChanged = (state) => {
+  if (branchState) {
+    boundAgent.loadState(branchState);
+  }
+  boundAgent.setContextStrategy(contextStrategy);
+  boundAgent.setLongTermMemory(store.longTermMemory);
+  boundAgent.setUserProfile(profileToAgentPrefs(getActiveProfile()));
+
+  boundAgent.onStateChanged = (state) => {
+    // Ignore stale callbacks from previously bound agent instances.
+    if (agent !== boundAgent) return;
     const now = new Date().toISOString();
     const keepLast = Math.max(1, Number(state?.contextPolicy?.keepLastMessages) || 12);
-    store.longTermMemory = clonePlain(agent.exportLongTermMemory());
-    const persistedState = clonePlain(agent.persistState());
+    store.longTermMemory = clonePlain(boundAgent.exportLongTermMemory());
+    const persistedState = clonePlain(boundAgent.persistState());
     activeBranch.state = persistedState;
     activeBranch.updatedAt = now;
     chat.state = persistedState;
@@ -527,40 +636,42 @@ function bindAgentToActiveChat() {
     persistStore();
     renderFactsPanel(contextStrategy, {
       long_term: store.longTermMemory,
-      working: state.workingMemory || agent.workingMemory,
+      working: state.workingMemory || boundAgent.workingMemory,
       short_term: state.shortTermMemory || {
         messages: Array.isArray(state.history)
           ? state.history.slice(-keepLast).map((m) => ({ role: m.role, content: String(m.text || "") }))
           : [],
       },
     });
+    renderInvariantPanel(
+      state.invariants || boundAgent.invariants,
+      state.lastInvariantCheck || boundAgent.lastInvariantCheck,
+    );
 
     const historyTotals = computeHistoryTotals(state.history || []);
     const globalTotals = mergeTotals(
       historyTotals,
-      state.summaryTotals || agent.summaryTotals,
+      state.summaryTotals || boundAgent.summaryTotals,
     );
     renderTotalsBar(globalTotals);
     renderTaskStatus(state.taskState, { isBusy: isSending });
     renderBranchingControls();
+    renderInvariantControls();
   };
-
-  if (branchState) {
-    agent.loadState(branchState);
-  }
-  agent.setContextStrategy(contextStrategy);
   renderFactsPanel(contextStrategy, {
     long_term: store.longTermMemory,
-    working: agent.workingMemory,
+    working: boundAgent.workingMemory,
     short_term: {
       messages: (() => {
-        const keepLast = Math.max(1, Number(agent.contextPolicy.keepLastMessages) || 12);
-        return Array.isArray(agent.history)
-          ? agent.history.slice(-keepLast).map((m) => ({ role: m.role, content: String(m.text || "") }))
+        const keepLast = Math.max(1, Number(boundAgent.contextPolicy.keepLastMessages) || 12);
+        return Array.isArray(boundAgent.history)
+          ? boundAgent.history.slice(-keepLast).map((m) => ({ role: m.role, content: String(m.text || "") }))
           : [];
       })(),
     },
   });
+  renderInvariantPanel(boundAgent.invariants, boundAgent.lastInvariantCheck);
+  renderInvariantControls();
 
   if (branchState && branchState.config) {
     if (typeof branchState.config.baseUrl === "string") {
@@ -574,10 +685,10 @@ function bindAgentToActiveChat() {
     }
   }
 
-  if (Array.isArray(agent.history) && agent.history.length > 0) {
-    renderHistory(agent.history, agent.summaryTotals, agent.summaries, {
+  if (Array.isArray(boundAgent.history) && boundAgent.history.length > 0) {
+    renderHistory(boundAgent.history, boundAgent.summaryTotals, boundAgent.summaries, {
       contextStrategy,
-      keepLastMessages: agent.contextPolicy.keepLastMessages,
+      keepLastMessages: boundAgent.contextPolicy.keepLastMessages,
     });
   } else {
     $("messages").innerHTML = "";
@@ -586,11 +697,12 @@ function bindAgentToActiveChat() {
       text: "Чат пуст. Напиши первое сообщение.",
       meta: { statsLines: [] },
     });
-    renderTotalsBar(mergeTotals(defaultTotals(), agent.summaryTotals));
+    renderTotalsBar(mergeTotals(defaultTotals(), boundAgent.summaryTotals));
   }
 
-  renderTaskStatus(agent.taskState, { isBusy: isSending });
+  renderTaskStatus(boundAgent.taskState, { isBusy: isSending });
   renderBranchingControls();
+  renderInvariantControls();
 }
 
 function switchToChat(chatId) {
@@ -1220,6 +1332,14 @@ $("profileMenuList").addEventListener("click", (e) => {
   if (action === "delete") {
     deleteProfile(profileId);
   }
+});
+
+$("addInvariant").addEventListener("click", () => {
+  addInvariant();
+});
+
+$("removeInvariant").addEventListener("click", () => {
+  removeSelectedInvariant();
 });
 
 ["baseUrl", "model", "temperature"].forEach((id) => {

@@ -227,6 +227,42 @@ export function renderFactsPanel(contextStrategy, memoryLayers) {
   content.textContent = JSON.stringify(normalized, null, 2);
 }
 
+export function renderInvariantPanel(invariants, invariantCheck) {
+  const panel = $("invariantPanel");
+  const content = $("invariantContent");
+  if (!panel || !content) return;
+
+  panel.hidden = false;
+  const normalizedInvariants = Array.isArray(invariants) ? invariants : [];
+  const check =
+    invariantCheck && typeof invariantCheck === "object" && !Array.isArray(invariantCheck)
+      ? invariantCheck
+      : null;
+
+  const decision = check
+    ? {
+        state: check.conflict ? "conflict" : "no_conflict",
+        violatedInvariants: Array.isArray(check.violatedInvariants)
+          ? check.violatedInvariants.map((item) => item.id)
+          : [],
+        allowedAlternative:
+          typeof check.safeAlternative === "string" && check.safeAlternative.trim()
+            ? check.safeAlternative
+            : "",
+      }
+    : null;
+
+  content.textContent = JSON.stringify(
+    {
+      invariants: normalizedInvariants,
+      invariantCheck: check,
+      decision,
+    },
+    null,
+    2,
+  );
+}
+
 export function renderTaskStatus(taskState, options = {}) {
   const stageEl = $("taskStage");
   const stepEl = $("taskStep");
@@ -287,6 +323,9 @@ export function setBusy(isBusy) {
     "baseUrl",
     "pauseTask",
     "continueTask",
+    "invariantSelect",
+    "addInvariant",
+    "removeInvariant",
   ];
 
   for (const id of ids) {

@@ -90,6 +90,18 @@
           <summary>Memory Layers (long/working/short)</summary>
           <pre id="factsContent"></pre>
         </details>
+        <details id="invariantPanel" class="facts-panel" hidden>
+          <summary>Invariant Guard (debug)</summary>
+          <div class="task-status-actions">
+            <label class="field" style="min-width: 260px">
+              <span>Инварианты</span>
+              <select id="invariantSelect"></select>
+            </label>
+            <button id="addInvariant" class="btn secondary" type="button">Добавить</button>
+            <button id="removeInvariant" class="btn danger" type="button">Удалить</button>
+          </div>
+          <pre id="invariantContent"></pre>
+        </details>
         <section id="taskStatusPanel" class="task-status-panel" aria-live="polite">
           <div class="task-status-head">
             <div class="task-status-title">Task Status</div>
