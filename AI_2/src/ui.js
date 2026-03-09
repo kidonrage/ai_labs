@@ -243,6 +243,9 @@ export function renderTaskStatus(taskState, options = {}) {
   const canPause =
     stage === "planning" || stage === "execution" || stage === "validation";
   const canContinue = stage === "paused";
+  const isTaskActive = canPause || canContinue;
+
+  panel.hidden = !isTaskActive;
 
   stageEl.textContent = stage;
   stepEl.textContent = String(step);
