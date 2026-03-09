@@ -463,72 +463,6 @@ function renderChatSelector() {
   $("deleteChat").disabled = store.chats.length <= 1;
 }
 
-function renderBranchingControls() {
-  const chat = getActiveChat();
-  const branchSelect = $("branchSelect");
-  const checkpointSelect = $("checkpointSelect");
-  const saveBtn = $("saveCheckpoint");
-  const forkBtn = $("newBranchFromCheckpoint");
-
-  if (!chat || !branchSelect || !checkpointSelect || !saveBtn || !forkBtn)
-    return;
-
-  chat.branching = normalizeBranching(chat.branching, chat.state || {});
-
-  const branching = chat.branching;
-  const isBranchingStrategy =
-    normalizeContextStrategy(chat.contextStrategy) === "branching";
-
-  branchSelect.innerHTML = "";
-  checkpointSelect.innerHTML = "";
-
-  for (const b of branching.branches) {
-    const opt = document.createElement("option");
-    opt.value = b.id;
-    opt.textContent = b.title;
-    branchSelect.appendChild(opt);
-  }
-
-  branchSelect.value = branching.activeBranchId;
-
-  const activeBranchId = branching.activeBranchId;
-  const cps = branching.checkpoints.filter(
-    (cp) => cp.branchId === activeBranchId,
-  );
-
-  for (const cp of cps) {
-    const opt = document.createElement("option");
-    opt.value = cp.id;
-    const countPart = Number.isFinite(cp.messageCount)
-      ? ` • msgs: ${cp.messageCount}`
-      : "";
-    opt.textContent = `${cp.title}${countPart}`;
-    checkpointSelect.appendChild(opt);
-  }
-
-  if (cps.length === 0) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "Checkpoint-ов нет";
-    checkpointSelect.appendChild(opt);
-  }
-
-  const selectedCheckpoint = cps.some(
-    (cp) => cp.id === branching.selectedCheckpointId,
-  )
-    ? branching.selectedCheckpointId
-    : cps[0]
-      ? cps[0].id
-      : "";
-  branching.selectedCheckpointId = selectedCheckpoint || null;
-  checkpointSelect.value = selectedCheckpoint;
-
-  branchSelect.disabled = !isBranchingStrategy;
-  checkpointSelect.disabled = !isBranchingStrategy;
-  saveBtn.disabled = !isBranchingStrategy;
-  forkBtn.disabled = !isBranchingStrategy || cps.length === 0;
-}
-
 function renderInvariantControls() {
   const select = $("invariantSelect");
   const removeBtn = $("removeInvariant");
@@ -701,7 +635,6 @@ function bindAgentToActiveChat() {
     );
     renderTotalsBar(globalTotals);
     renderTaskStatus(state.taskState, { isBusy: isSending });
-    renderBranchingControls();
     renderInvariantControls();
   };
   renderFactsPanel(contextStrategy, {
@@ -757,7 +690,6 @@ function bindAgentToActiveChat() {
   }
 
   renderTaskStatus(boundAgent.taskState, { isBusy: isSending });
-  renderBranchingControls();
   renderInvariantControls();
 }
 
@@ -1223,7 +1155,6 @@ async function handleSend() {
     setBusy(false);
     renderTaskStatus(agent.taskState, { isBusy: isSending });
     renderChatSelector();
-    renderBranchingControls();
   }
 }
 
