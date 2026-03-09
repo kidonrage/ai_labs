@@ -34,7 +34,7 @@ function contextStrategyLabel(value) {
 
 async function loadPrivateConfig() {
   try {
-    const mod = await import("./private.config.js");
+    const mod = await import("./config/private.config.js");
     return (mod && mod.PRIVATE_APP_CONFIG) || {};
   } catch {
     return {};
@@ -50,15 +50,24 @@ function getEffectiveApiKey() {
 }
 
 function makeChatId() {
-  return (crypto.randomUUID && crypto.randomUUID()) || `chat_${Date.now()}_${Math.random()}`;
+  return (
+    (crypto.randomUUID && crypto.randomUUID()) ||
+    `chat_${Date.now()}_${Math.random()}`
+  );
 }
 
 function makeBranchId() {
-  return (crypto.randomUUID && crypto.randomUUID()) || `branch_${Date.now()}_${Math.random()}`;
+  return (
+    (crypto.randomUUID && crypto.randomUUID()) ||
+    `branch_${Date.now()}_${Math.random()}`
+  );
 }
 
 function makeProfileId() {
-  return (crypto.randomUUID && crypto.randomUUID()) || `profile_${Date.now()}_${Math.random()}`;
+  return (
+    (crypto.randomUUID && crypto.randomUUID()) ||
+    `profile_${Date.now()}_${Math.random()}`
+  );
 }
 
 function clonePlain(value) {
@@ -84,7 +93,9 @@ function normalizeProfile(profile, index = 0) {
     );
 
   const style = normalizeString(raw.style) || "Кратко, по делу, без воды.";
-  const format = normalizeString(raw.format) || "Структурированный ответ с заголовками при необходимости.";
+  const format =
+    normalizeString(raw.format) ||
+    "Структурированный ответ с заголовками при необходимости.";
   const constraints = normalizeArray(raw.constraints);
   const now = new Date().toISOString();
 
@@ -139,9 +150,10 @@ function makeDefaultBranching(baseState) {
 
 function normalizeBranching(rawBranching, fallbackState) {
   const now = new Date().toISOString();
-  const fallback = fallbackState && typeof fallbackState === "object"
-    ? clonePlain(fallbackState)
-    : {};
+  const fallback =
+    fallbackState && typeof fallbackState === "object"
+      ? clonePlain(fallbackState)
+      : {};
 
   if (rawBranching && typeof rawBranching === "object") {
     const normalizedBranches = Array.isArray(rawBranching.branches)
@@ -149,39 +161,64 @@ function normalizeBranching(rawBranching, fallbackState) {
           .filter((b) => b && typeof b.id === "string")
           .map((b, idx) => ({
             id: b.id,
-            title: typeof b.title === "string" && b.title.trim()
-              ? b.title.trim()
-              : `Ветка ${idx + 1}`,
-            parentBranchId: typeof b.parentBranchId === "string" ? b.parentBranchId : null,
-            parentCheckpointId: typeof b.parentCheckpointId === "string" ? b.parentCheckpointId : null,
+            title:
+              typeof b.title === "string" && b.title.trim()
+                ? b.title.trim()
+                : `Ветка ${idx + 1}`,
+            parentBranchId:
+              typeof b.parentBranchId === "string" ? b.parentBranchId : null,
+            parentCheckpointId:
+              typeof b.parentCheckpointId === "string"
+                ? b.parentCheckpointId
+                : null,
             createdAt: typeof b.createdAt === "string" ? b.createdAt : now,
             updatedAt: typeof b.updatedAt === "string" ? b.updatedAt : now,
-            state: b.state && typeof b.state === "object" ? clonePlain(b.state) : clonePlain(fallback),
+            state:
+              b.state && typeof b.state === "object"
+                ? clonePlain(b.state)
+                : clonePlain(fallback),
           }))
       : [];
 
     if (normalizedBranches.length > 0) {
-      const activeBranchId = normalizedBranches.some((b) => b.id === rawBranching.activeBranchId)
+      const activeBranchId = normalizedBranches.some(
+        (b) => b.id === rawBranching.activeBranchId,
+      )
         ? rawBranching.activeBranchId
         : normalizedBranches[0].id;
 
       const checkpoints = Array.isArray(rawBranching.checkpoints)
         ? rawBranching.checkpoints
-            .filter((cp) => cp && typeof cp.id === "string" && typeof cp.branchId === "string")
-            .filter((cp) => normalizedBranches.some((b) => b.id === cp.branchId))
+            .filter(
+              (cp) =>
+                cp &&
+                typeof cp.id === "string" &&
+                typeof cp.branchId === "string",
+            )
+            .filter((cp) =>
+              normalizedBranches.some((b) => b.id === cp.branchId),
+            )
             .map((cp, idx) => ({
               id: cp.id,
-              title: typeof cp.title === "string" && cp.title.trim()
-                ? cp.title.trim()
-                : `Checkpoint ${idx + 1}`,
+              title:
+                typeof cp.title === "string" && cp.title.trim()
+                  ? cp.title.trim()
+                  : `Checkpoint ${idx + 1}`,
               branchId: cp.branchId,
               createdAt: typeof cp.createdAt === "string" ? cp.createdAt : now,
-              messageCount: Number.isFinite(cp.messageCount) ? cp.messageCount : 0,
-              state: cp.state && typeof cp.state === "object" ? clonePlain(cp.state) : clonePlain(fallback),
+              messageCount: Number.isFinite(cp.messageCount)
+                ? cp.messageCount
+                : 0,
+              state:
+                cp.state && typeof cp.state === "object"
+                  ? clonePlain(cp.state)
+                  : clonePlain(fallback),
             }))
         : [];
 
-      const selectedCheckpointId = checkpoints.some((cp) => cp.id === rawBranching.selectedCheckpointId)
+      const selectedCheckpointId = checkpoints.some(
+        (cp) => cp.id === rawBranching.selectedCheckpointId,
+      )
         ? rawBranching.selectedCheckpointId
         : null;
 
@@ -204,17 +241,26 @@ function normalizeStore(raw, fallbackConfig) {
     const chats = raw.chats
       .filter((c) => c && typeof c.id === "string")
       .map((c) => {
-        const legacyState = c.state && typeof c.state === "object" ? c.state : null;
+        const legacyState =
+          c.state && typeof c.state === "object" ? c.state : null;
         const branching = normalizeBranching(c.branching, legacyState || {});
         const activeBranch =
-          branching.branches.find((b) => b.id === branching.activeBranchId) || branching.branches[0];
+          branching.branches.find((b) => b.id === branching.activeBranchId) ||
+          branching.branches[0];
 
         return {
           id: c.id,
-          title: typeof c.title === "string" && c.title.trim() ? c.title : "Чат",
+          title:
+            typeof c.title === "string" && c.title.trim() ? c.title : "Чат",
           contextStrategy: normalizeContextStrategy(c.contextStrategy),
-          createdAt: typeof c.createdAt === "string" ? c.createdAt : new Date().toISOString(),
-          updatedAt: typeof c.updatedAt === "string" ? c.updatedAt : new Date().toISOString(),
+          createdAt:
+            typeof c.createdAt === "string"
+              ? c.createdAt
+              : new Date().toISOString(),
+          updatedAt:
+            typeof c.updatedAt === "string"
+              ? c.updatedAt
+              : new Date().toISOString(),
           state: clonePlain(activeBranch.state),
           branching,
         };
@@ -223,26 +269,37 @@ function normalizeStore(raw, fallbackConfig) {
     if (chats.length > 0) {
       const hasActive = chats.some((c) => c.id === raw.activeChatId);
       const profiles = normalizeProfiles(raw.profiles);
-      const hasActiveProfile = profiles.some((p) => p.id === raw.activeProfileId);
+      const hasActiveProfile = profiles.some(
+        (p) => p.id === raw.activeProfileId,
+      );
       return {
         version: 4,
         longTermMemory: normalizeLongTerm(raw.longTermMemory),
         activeChatId: hasActive ? raw.activeChatId : chats[0].id,
-        activeProfileId: hasActiveProfile ? raw.activeProfileId : profiles[0].id,
+        activeProfileId: hasActiveProfile
+          ? raw.activeProfileId
+          : profiles[0].id,
         profiles,
         chats,
       };
     }
   }
 
-  if (raw && typeof raw === "object" && Array.isArray(raw.history) && raw.config) {
+  if (
+    raw &&
+    typeof raw === "object" &&
+    Array.isArray(raw.history) &&
+    raw.config
+  ) {
     const branching = normalizeBranching(null, raw);
     return {
       version: 4,
       longTermMemory: normalizeLongTerm(raw.longTermMemory),
       activeChatId: "chat_1",
       activeProfileId: "profile_default",
-      profiles: [normalizeProfile({ id: "profile_default", name: "Стандартный" }, 0)],
+      profiles: [
+        normalizeProfile({ id: "profile_default", name: "Стандартный" }, 0),
+      ],
       chats: [
         {
           id: "chat_1",
@@ -272,7 +329,9 @@ function normalizeStore(raw, fallbackConfig) {
     longTermMemory: normalizeLongTerm(raw && raw.longTermMemory),
     activeChatId: "chat_1",
     activeProfileId: "profile_default",
-    profiles: [normalizeProfile({ id: "profile_default", name: "Стандартный" }, 0)],
+    profiles: [
+      normalizeProfile({ id: "profile_default", name: "Стандартный" }, 0),
+    ],
     chats: [
       {
         id: "chat_1",
@@ -322,7 +381,11 @@ function getActiveChat() {
 }
 
 function getActiveProfile() {
-  return store.profiles.find((p) => p.id === activeProfileId) || store.profiles[0] || null;
+  return (
+    store.profiles.find((p) => p.id === activeProfileId) ||
+    store.profiles[0] ||
+    null
+  );
 }
 
 function renderProfileMenu() {
@@ -334,7 +397,9 @@ function renderProfileMenu() {
 
   const selected = store.profiles.some((p) => p.id === activeProfileId)
     ? activeProfileId
-    : (store.profiles[0] ? store.profiles[0].id : "");
+    : store.profiles[0]
+      ? store.profiles[0].id
+      : "";
   activeProfileId = selected;
 
   const activeProfile = getActiveProfile();
@@ -371,9 +436,16 @@ function getActiveBranch(chat) {
   const currentChat = chat || getActiveChat();
   if (!currentChat) return null;
 
-  currentChat.branching = normalizeBranching(currentChat.branching, currentChat.state || {});
+  currentChat.branching = normalizeBranching(
+    currentChat.branching,
+    currentChat.state || {},
+  );
   const branching = currentChat.branching;
-  return branching.branches.find((b) => b.id === branching.activeBranchId) || branching.branches[0] || null;
+  return (
+    branching.branches.find((b) => b.id === branching.activeBranchId) ||
+    branching.branches[0] ||
+    null
+  );
 }
 
 function renderChatSelector() {
@@ -398,12 +470,14 @@ function renderBranchingControls() {
   const saveBtn = $("saveCheckpoint");
   const forkBtn = $("newBranchFromCheckpoint");
 
-  if (!chat || !branchSelect || !checkpointSelect || !saveBtn || !forkBtn) return;
+  if (!chat || !branchSelect || !checkpointSelect || !saveBtn || !forkBtn)
+    return;
 
   chat.branching = normalizeBranching(chat.branching, chat.state || {});
 
   const branching = chat.branching;
-  const isBranchingStrategy = normalizeContextStrategy(chat.contextStrategy) === "branching";
+  const isBranchingStrategy =
+    normalizeContextStrategy(chat.contextStrategy) === "branching";
 
   branchSelect.innerHTML = "";
   checkpointSelect.innerHTML = "";
@@ -418,12 +492,16 @@ function renderBranchingControls() {
   branchSelect.value = branching.activeBranchId;
 
   const activeBranchId = branching.activeBranchId;
-  const cps = branching.checkpoints.filter((cp) => cp.branchId === activeBranchId);
+  const cps = branching.checkpoints.filter(
+    (cp) => cp.branchId === activeBranchId,
+  );
 
   for (const cp of cps) {
     const opt = document.createElement("option");
     opt.value = cp.id;
-    const countPart = Number.isFinite(cp.messageCount) ? ` • msgs: ${cp.messageCount}` : "";
+    const countPart = Number.isFinite(cp.messageCount)
+      ? ` • msgs: ${cp.messageCount}`
+      : "";
     opt.textContent = `${cp.title}${countPart}`;
     checkpointSelect.appendChild(opt);
   }
@@ -435,7 +513,9 @@ function renderBranchingControls() {
     checkpointSelect.appendChild(opt);
   }
 
-  const selectedCheckpoint = cps.some((cp) => cp.id === branching.selectedCheckpointId)
+  const selectedCheckpoint = cps.some(
+    (cp) => cp.id === branching.selectedCheckpointId,
+  )
     ? branching.selectedCheckpointId
     : cps[0]
       ? cps[0].id
@@ -461,7 +541,10 @@ function renderInvariantControls() {
   for (const inv of invariants) {
     const opt = document.createElement("option");
     opt.value = inv.id;
-    const title = typeof inv.title === "string" && inv.title.trim() ? inv.title.trim() : inv.id;
+    const title =
+      typeof inv.title === "string" && inv.title.trim()
+        ? inv.title.trim()
+        : inv.id;
     opt.textContent = `${title} (${inv.id})`;
     select.appendChild(opt);
   }
@@ -525,7 +608,9 @@ function addInvariant() {
   const draft = promptInvariantDraft();
   if (!draft) return;
 
-  const current = Array.isArray(agent.invariants) ? clonePlain(agent.invariants) : [];
+  const current = Array.isArray(agent.invariants)
+    ? clonePlain(agent.invariants)
+    : [];
   if (current.some((inv) => inv.id === draft.id)) {
     window.alert(`Инвариант с id "${draft.id}" уже существует.`);
     return;
@@ -543,7 +628,9 @@ function removeSelectedInvariant() {
   const ok = window.confirm(`Удалить инвариант "${id}"?`);
   if (!ok) return;
 
-  const current = Array.isArray(agent.invariants) ? clonePlain(agent.invariants) : [];
+  const current = Array.isArray(agent.invariants)
+    ? clonePlain(agent.invariants)
+    : [];
   const next = current.filter((inv) => inv && inv.id !== id);
   agent.setInvariants(next);
   renderInvariantControls();
@@ -551,7 +638,9 @@ function removeSelectedInvariant() {
 
 function profileToAgentPrefs(profile) {
   if (!profile) return null;
-  const constraints = Array.isArray(profile.constraints) ? profile.constraints : [];
+  const constraints = Array.isArray(profile.constraints)
+    ? profile.constraints
+    : [];
   return {
     id: profile.id,
     name: profile.name,
@@ -578,15 +667,22 @@ function bindAgentToActiveChat() {
   }
 
   const currentApiKey = getEffectiveApiKey();
-  const branchState = activeBranch.state && typeof activeBranch.state === "object"
-    ? activeBranch.state
-    : (chat.state || {});
+  const branchState =
+    activeBranch.state && typeof activeBranch.state === "object"
+      ? activeBranch.state
+      : chat.state || {};
   const chatConfig = (branchState && branchState.config) || {};
 
   agent = new Agent({
-    baseUrl: typeof chatConfig.baseUrl === "string" ? chatConfig.baseUrl : fallbackConfig.baseUrl,
+    baseUrl:
+      typeof chatConfig.baseUrl === "string"
+        ? chatConfig.baseUrl
+        : fallbackConfig.baseUrl,
     apiKey: currentApiKey,
-    model: typeof chatConfig.model === "string" ? chatConfig.model : fallbackConfig.model,
+    model:
+      typeof chatConfig.model === "string"
+        ? chatConfig.model
+        : fallbackConfig.model,
     temperature: Number.isFinite(chatConfig.temperature)
       ? chatConfig.temperature
       : fallbackConfig.temperature,
@@ -604,7 +700,10 @@ function bindAgentToActiveChat() {
     // Ignore stale callbacks from previously bound agent instances.
     if (agent !== boundAgent) return;
     const now = new Date().toISOString();
-    const keepLast = Math.max(1, Number(state?.contextPolicy?.keepLastMessages) || 12);
+    const keepLast = Math.max(
+      1,
+      Number(state?.contextPolicy?.keepLastMessages) || 12,
+    );
     store.longTermMemory = clonePlain(boundAgent.exportLongTermMemory());
     const persistedState = clonePlain(boundAgent.persistState());
     activeBranch.state = persistedState;
@@ -617,7 +716,9 @@ function bindAgentToActiveChat() {
       working: state.workingMemory || boundAgent.workingMemory,
       short_term: state.shortTermMemory || {
         messages: Array.isArray(state.history)
-          ? state.history.slice(-keepLast).map((m) => ({ role: m.role, content: String(m.text || "") }))
+          ? state.history
+              .slice(-keepLast)
+              .map((m) => ({ role: m.role, content: String(m.text || "") }))
           : [],
       },
     });
@@ -641,9 +742,14 @@ function bindAgentToActiveChat() {
     working: boundAgent.workingMemory,
     short_term: {
       messages: (() => {
-        const keepLast = Math.max(1, Number(boundAgent.contextPolicy.keepLastMessages) || 12);
+        const keepLast = Math.max(
+          1,
+          Number(boundAgent.contextPolicy.keepLastMessages) || 12,
+        );
         return Array.isArray(boundAgent.history)
-          ? boundAgent.history.slice(-keepLast).map((m) => ({ role: m.role, content: String(m.text || "") }))
+          ? boundAgent.history
+              .slice(-keepLast)
+              .map((m) => ({ role: m.role, content: String(m.text || "") }))
           : [];
       })(),
     },
@@ -664,10 +770,15 @@ function bindAgentToActiveChat() {
   }
 
   if (Array.isArray(boundAgent.history) && boundAgent.history.length > 0) {
-    renderHistory(boundAgent.history, boundAgent.summaryTotals, boundAgent.summaries, {
-      contextStrategy,
-      keepLastMessages: boundAgent.contextPolicy.keepLastMessages,
-    });
+    renderHistory(
+      boundAgent.history,
+      boundAgent.summaryTotals,
+      boundAgent.summaries,
+      {
+        contextStrategy,
+        keepLastMessages: boundAgent.contextPolicy.keepLastMessages,
+      },
+    );
   } else {
     $("messages").innerHTML = "";
     addMessage({
@@ -733,7 +844,9 @@ function promptProfileDraft(initial = null) {
   if (formatRaw == null) return null;
   const format = formatRaw.trim() || base.format;
 
-  const constraintsDefault = Array.isArray(base.constraints) ? base.constraints.join("; ") : "";
+  const constraintsDefault = Array.isArray(base.constraints)
+    ? base.constraints.join("; ")
+    : "";
   const constraintsRaw = window.prompt(
     "Ограничения (через ; , или с новой строки):",
     constraintsDefault,
@@ -826,9 +939,12 @@ function createChatFromCurrent() {
   if (!sourceChat) return;
 
   const sourceBranch = getActiveBranch(sourceChat);
-  const sourceState = sourceBranch && sourceBranch.state
-    ? clonePlain(sourceBranch.state)
-    : (agent ? clonePlain(agent.exportState()) : clonePlain(sourceChat.state || {}));
+  const sourceState =
+    sourceBranch && sourceBranch.state
+      ? clonePlain(sourceBranch.state)
+      : agent
+        ? clonePlain(agent.exportState())
+        : clonePlain(sourceChat.state || {});
 
   const now = new Date().toISOString();
   const chatId = makeChatId();
@@ -944,7 +1060,9 @@ function parseTaskCommand(text) {
 }
 
 function isActiveTaskStage(stage) {
-  return stage === "planning" || stage === "execution" || stage === "validation";
+  return (
+    stage === "planning" || stage === "execution" || stage === "validation"
+  );
 }
 
 function pushAssistantMessage(text) {
@@ -959,7 +1077,9 @@ function pushAssistantMessage(text) {
 
 function pushStageChangedMessage(transition) {
   if (!transition || transition.from === transition.to) return;
-  pushAssistantMessage(`Task stage changed: ${transition.from} -> ${transition.to}`);
+  pushAssistantMessage(
+    `Task stage changed: ${transition.from} -> ${transition.to}`,
+  );
 }
 
 async function handleTaskCommandOrStep(text) {
@@ -986,7 +1106,9 @@ async function handleTaskCommandOrStep(text) {
   if (command && command.type === "pause") {
     const ok = agent.pauseTask();
     if (!ok) {
-      pushAssistantMessage("Пауза недоступна: нет активного шага planning/execution/validation.");
+      pushAssistantMessage(
+        "Пауза недоступна: нет активного шага planning/execution/validation.",
+      );
       return true;
     }
     pushStageChangedMessage({ from: stage, to: "paused" });
@@ -995,14 +1117,18 @@ async function handleTaskCommandOrStep(text) {
   }
 
   if (command && command.type === "continue") {
-    const pausedFrom = taskState && taskState.pausedFrom ? taskState.pausedFrom : null;
+    const pausedFrom =
+      taskState && taskState.pausedFrom ? taskState.pausedFrom : null;
     const resumed = agent.continueTask();
     if (!resumed) {
       pushAssistantMessage("Продолжение недоступно: задача не на паузе.");
       return true;
     }
     const resumedState = agent.taskState || {};
-    pushStageChangedMessage({ from: "paused", to: resumedState.stage || "idle" });
+    pushStageChangedMessage({
+      from: "paused",
+      to: resumedState.stage || "idle",
+    });
     if (isActiveTaskStage(resumedState.stage)) {
       const result = await agent.runTaskStep({ userMessage: text });
       pushStageChangedMessage(result.transition);
@@ -1026,7 +1152,9 @@ async function handleTaskCommandOrStep(text) {
   }
 
   if (stage === "paused") {
-    pushAssistantMessage("Задача на паузе. Используйте continue или кнопку Continue.");
+    pushAssistantMessage(
+      "Задача на паузе. Используйте continue или кнопку Continue.",
+    );
     return true;
   }
 
@@ -1098,7 +1226,9 @@ async function handleSend() {
     typing.remove();
     const activeChat = getActiveChat();
     renderHistory(agent.history, agent.summaryTotals, agent.summaries, {
-      contextStrategy: normalizeContextStrategy(activeChat && activeChat.contextStrategy),
+      contextStrategy: normalizeContextStrategy(
+        activeChat && activeChat.contextStrategy,
+      ),
       keepLastMessages: agent.contextPolicy.keepLastMessages,
     });
   } catch (err) {
@@ -1116,7 +1246,9 @@ async function handleSend() {
 
     const activeChat = getActiveChat();
     renderHistory(agent.history, agent.summaryTotals, agent.summaries, {
-      contextStrategy: normalizeContextStrategy(activeChat && activeChat.contextStrategy),
+      contextStrategy: normalizeContextStrategy(
+        activeChat && activeChat.contextStrategy,
+      ),
       keepLastMessages: agent.contextPolicy.keepLastMessages,
     });
   } finally {
@@ -1143,8 +1275,7 @@ if (persisted) {
 } else {
   addMessage({
     role: "assistant",
-    text:
-      "Привет! Можно создавать несколько независимых чатов, переключаться между ними, и они сохраняются в localStorage.",
+    text: "Привет! Можно создавать несколько независимых чатов, переключаться между ними, и они сохраняются в localStorage.",
     meta: { statsLines: [] },
   });
 }
