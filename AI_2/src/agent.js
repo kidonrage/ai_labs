@@ -1,8 +1,6 @@
 import { OpenAIModelPricing } from "./pricing.js";
 import { normalizeUsage } from "./helpers.js";
-import {
-  normalizeInvariants,
-} from "./invariants.store.js";
+import { normalizeInvariants } from "./invariants.store.js";
 import {
   createDraftPlan as createInvariantDraftPlan,
   checkInvariantConflicts as runInvariantChecker,
@@ -12,12 +10,18 @@ import { formatInvariantRefusal as buildInvariantRefusalText } from "./refusal-f
 import { TaskStageWorkflow } from "./task-stage-workflow.js";
 
 function normalizeUserProfile(profile) {
-  const raw = profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {};
+  const raw =
+    profile && typeof profile === "object" && !Array.isArray(profile)
+      ? profile
+      : {};
   const prefsRaw =
-    raw.preferences && typeof raw.preferences === "object" && !Array.isArray(raw.preferences)
+    raw.preferences &&
+    typeof raw.preferences === "object" &&
+    !Array.isArray(raw.preferences)
       ? raw.preferences
       : {};
-  const normalizeString = (v) => (typeof v === "string" && v.trim() ? v.trim() : "");
+  const normalizeString = (v) =>
+    typeof v === "string" && v.trim() ? v.trim() : "";
   const constraints = Array.from(
     new Set(
       (Array.isArray(prefsRaw.constraints) ? prefsRaw.constraints : [])
@@ -106,7 +110,9 @@ export class Agent {
     }
 
     const profileRaw =
-      value.profile && typeof value.profile === "object" && !Array.isArray(value.profile)
+      value.profile &&
+      typeof value.profile === "object" &&
+      !Array.isArray(value.profile)
         ? value.profile
         : {};
     const preferencesRaw =
@@ -143,7 +149,8 @@ export class Agent {
       },
       preferences: {
         verbosity:
-          typeof preferencesRaw.verbosity === "string" && preferencesRaw.verbosity.trim()
+          typeof preferencesRaw.verbosity === "string" &&
+          preferencesRaw.verbosity.trim()
             ? preferencesRaw.verbosity.trim()
             : base.preferences.verbosity,
         format: (() => {
@@ -162,9 +169,10 @@ export class Agent {
       return base;
     }
 
-    const taskRaw = value.task && typeof value.task === "object" && !Array.isArray(value.task)
-      ? value.task
-      : {};
+    const taskRaw =
+      value.task && typeof value.task === "object" && !Array.isArray(value.task)
+        ? value.task
+        : {};
 
     const normalizeStringArray = (arr) =>
       Array.from(
@@ -177,7 +185,9 @@ export class Agent {
       );
 
     const rawEntities =
-      taskRaw.entities && typeof taskRaw.entities === "object" && !Array.isArray(taskRaw.entities)
+      taskRaw.entities &&
+      typeof taskRaw.entities === "object" &&
+      !Array.isArray(taskRaw.entities)
         ? taskRaw.entities
         : {};
     const entities = {};
@@ -241,7 +251,7 @@ export class Agent {
     };
 
     this.contextPolicy = {
-      keepLastMessages: 4,
+      keepLastMessages: 20,
       memoryModel: "gpt-3.5-turbo",
       memoryTemperature: 0.1,
     };
@@ -269,8 +279,10 @@ export class Agent {
       setLastInvariantCheck: (check) => {
         this.lastInvariantCheck = check;
       },
-      computeInvariantDecision: (userRequest) => this._computeInvariantDecision(userRequest),
-      formatInvariantRefusal: (checkResult) => this.formatInvariantRefusal(checkResult),
+      computeInvariantDecision: (userRequest) =>
+        this._computeInvariantDecision(userRequest),
+      formatInvariantRefusal: (checkResult) =>
+        this.formatInvariantRefusal(checkResult),
       runTaskLLMStep: (input) => this._runTaskLLMStep(input),
       extractJsonObject: (text) => this._extractJsonObject(text),
     });
@@ -389,7 +401,8 @@ export class Agent {
         !Number.isFinite(this.contextPolicy.memoryTemperature) &&
         Number.isFinite(state.contextPolicy.factsTemperature)
       ) {
-        this.contextPolicy.memoryTemperature = state.contextPolicy.factsTemperature;
+        this.contextPolicy.memoryTemperature =
+          state.contextPolicy.factsTemperature;
       }
     }
 
@@ -449,7 +462,9 @@ export class Agent {
       typeof state.lastInvariantCheck === "object" &&
       !Array.isArray(state.lastInvariantCheck)
     ) {
-      this.lastInvariantCheck = normalizeInvariantCheck(state.lastInvariantCheck);
+      this.lastInvariantCheck = normalizeInvariantCheck(
+        state.lastInvariantCheck,
+      );
     } else {
       this.lastInvariantCheck = null;
     }
@@ -553,7 +568,9 @@ export class Agent {
         working: Agent.normalizeWorkingMemory(this.workingMemory),
       },
       taskState: Agent.normalizeTaskState(this.taskState),
-      invariants: normalizeInvariants(this.invariants, { mergeWithDefaults: false }),
+      invariants: normalizeInvariants(this.invariants, {
+        mergeWithDefaults: false,
+      }),
     };
   }
 
@@ -563,7 +580,9 @@ export class Agent {
 
   checkInvariantConflicts(agentContext, draftPlan) {
     const ctx =
-      agentContext && typeof agentContext === "object" && !Array.isArray(agentContext)
+      agentContext &&
+      typeof agentContext === "object" &&
+      !Array.isArray(agentContext)
         ? agentContext
         : this.buildAgentContext("");
     return runInvariantChecker({
@@ -581,7 +600,10 @@ export class Agent {
   _computeInvariantDecision(userRequest = "") {
     const agentContext = this.buildAgentContext(userRequest);
     const draftPlan = this.createDraftPlan(agentContext);
-    const invariantCheck = this.checkInvariantConflicts(agentContext, draftPlan);
+    const invariantCheck = this.checkInvariantConflicts(
+      agentContext,
+      draftPlan,
+    );
     return { agentContext, draftPlan, invariantCheck };
   }
 
@@ -605,12 +627,17 @@ export class Agent {
   }
 
   _extractMemoryWritePatch(parsed) {
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return null;
     const root =
-      parsed.write && typeof parsed.write === "object" && !Array.isArray(parsed.write)
+      parsed.write &&
+      typeof parsed.write === "object" &&
+      !Array.isArray(parsed.write)
         ? parsed.write
         : parsed;
-    return root && typeof root === "object" && !Array.isArray(root) ? root : null;
+    return root && typeof root === "object" && !Array.isArray(root)
+      ? root
+      : null;
   }
 
   _pushUniqueStrings(target, values) {
@@ -629,7 +656,8 @@ export class Agent {
       target && typeof target === "object" && !Array.isArray(target)
         ? { ...target }
         : {};
-    const src = patch && typeof patch === "object" && !Array.isArray(patch) ? patch : {};
+    const src =
+      patch && typeof patch === "object" && !Array.isArray(patch) ? patch : {};
     for (const [k, v] of Object.entries(src)) {
       if (typeof k !== "string") continue;
       const key = k.trim();
@@ -647,13 +675,20 @@ export class Agent {
   }
 
   _applyMemoryWritePatch(writePatch) {
-    if (!writePatch || typeof writePatch !== "object" || Array.isArray(writePatch)) return;
+    if (
+      !writePatch ||
+      typeof writePatch !== "object" ||
+      Array.isArray(writePatch)
+    )
+      return;
 
     const normalizedLong = Agent.normalizeLongTermMemory(this.longTermMemory);
     const normalizedWorking = Agent.normalizeWorkingMemory(this.workingMemory);
 
     const workingPatch =
-      writePatch.working && typeof writePatch.working === "object" && !Array.isArray(writePatch.working)
+      writePatch.working &&
+      typeof writePatch.working === "object" &&
+      !Array.isArray(writePatch.working)
         ? writePatch.working
         : {};
     const longPatch =
@@ -712,7 +747,8 @@ export class Agent {
       !Array.isArray(longPatch.add_profile)
     ) {
       for (const [k, v] of Object.entries(longPatch.add_profile)) {
-        if (typeof k !== "string" || typeof v !== "string" || !v.trim()) continue;
+        if (typeof k !== "string" || typeof v !== "string" || !v.trim())
+          continue;
         nextLong.profile[k.trim()] = v.trim();
       }
     }
@@ -732,7 +768,10 @@ export class Agent {
         }
       }
     }
-    nextLong.facts = this._pushUniqueStrings(nextLong.facts, longPatch.add_facts);
+    nextLong.facts = this._pushUniqueStrings(
+      nextLong.facts,
+      longPatch.add_facts,
+    );
     nextLong.stable_decisions = this._pushUniqueStrings(
       nextLong.stable_decisions,
       longPatch.add_stable_decisions,
@@ -776,7 +815,8 @@ export class Agent {
   }
 
   async _updateMemoryWithLLM(nextUserText) {
-    if (!this.apiKey) throw new Error("API key пустой (нужен для memory update).");
+    if (!this.apiKey)
+      throw new Error("API key пустой (нужен для memory update).");
 
     const keepLast = this._slidingWindowSize();
     const recentMessages = this.history.slice(-keepLast);
@@ -896,7 +936,11 @@ export class Agent {
     parts.push("INVARIANTS:");
     parts.push(JSON.stringify(this.invariants, null, 2));
 
-    if (runtimeContext && typeof runtimeContext === "object" && !Array.isArray(runtimeContext)) {
+    if (
+      runtimeContext &&
+      typeof runtimeContext === "object" &&
+      !Array.isArray(runtimeContext)
+    ) {
       const draftPlan = runtimeContext.draftPlan || null;
       const invariantCheck = runtimeContext.invariantCheck || null;
       if (draftPlan) {
