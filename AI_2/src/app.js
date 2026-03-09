@@ -537,21 +537,20 @@ function renderInvariantControls() {
   const invariants = Array.isArray(agent.invariants) ? agent.invariants : [];
   const prevValue = select.value;
   select.innerHTML = "";
-  const toInvariantText = (inv) => (typeof inv === "string" ? inv : JSON.stringify(inv));
 
   for (const inv of invariants) {
+    if (typeof inv !== "string") continue;
     const opt = document.createElement("option");
-    const text = toInvariantText(inv);
-    opt.value = text;
-    opt.textContent = text;
+    opt.value = inv;
+    opt.textContent = inv;
     select.appendChild(opt);
   }
 
-  const hasPrev = invariants.some((inv) => toInvariantText(inv) === prevValue);
+  const hasPrev = invariants.some((inv) => inv === prevValue);
   if (hasPrev) {
     select.value = prevValue;
   } else if (invariants[0]) {
-    select.value = toInvariantText(invariants[0]);
+    select.value = invariants[0];
   }
 
   if (removeBtn) {
@@ -579,7 +578,7 @@ function addInvariant() {
     ? clonePlain(agent.invariants)
     : [];
   const normalizedDraft = draft.toLowerCase();
-  if (current.some((inv) => typeof inv === "string" && inv.toLowerCase() === normalizedDraft)) {
+  if (current.some((inv) => inv.toLowerCase() === normalizedDraft)) {
     window.alert("Такой инвариант уже существует.");
     return;
   }
@@ -599,10 +598,7 @@ function removeSelectedInvariant() {
   const current = Array.isArray(agent.invariants)
     ? clonePlain(agent.invariants)
     : [];
-  const next = current.filter((inv) => {
-    const text = typeof inv === "string" ? inv : JSON.stringify(inv);
-    return text !== invariant;
-  });
+  const next = current.filter((inv) => inv !== invariant);
   agent.setInvariants(next);
   renderInvariantControls();
 }

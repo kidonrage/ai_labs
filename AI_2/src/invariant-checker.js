@@ -20,21 +20,10 @@ function normalizeInvariantCheck(value) {
     violatedInvariants: violated
       .filter((item) => item && typeof item === "object")
       .map((item) => ({
-        invariant: (() => {
-          if (typeof item.invariant === "string" && item.invariant.trim()) {
-            return item.invariant.trim();
-          }
-          if (typeof item.rule === "string" && item.rule.trim()) {
-            return item.rule.trim();
-          }
-          if (typeof item.title === "string" && item.title.trim()) {
-            return item.title.trim();
-          }
-          if (typeof item.id === "string" && item.id.trim()) {
-            return item.id.trim();
-          }
-          return "Неизвестный инвариант";
-        })(),
+        invariant:
+          typeof item.invariant === "string" && item.invariant.trim()
+            ? item.invariant.trim()
+            : "Неизвестный инвариант",
         reason: typeof item.reason === "string" ? item.reason : "Unknown reason",
       })),
     explanation: normalizeText(raw.explanation),

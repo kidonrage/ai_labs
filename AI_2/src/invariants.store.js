@@ -8,10 +8,6 @@ function normalizeInvariantString(raw) {
   if (typeof raw === "string" && raw.trim()) {
     return raw.trim();
   }
-  // Legacy migration path: previous format stored rules inside objects.
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    if (typeof raw.rule === "string" && raw.rule.trim()) return raw.rule.trim();
-  }
   return "";
 }
 
