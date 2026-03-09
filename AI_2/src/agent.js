@@ -259,11 +259,11 @@ export class Agent {
     this.systemPreamble =
       "Ты полезный ассистент. Отвечай кратко и по делу, если не просят иначе.";
     this.plannerPrompt =
-      "Собери короткий draft-план ответа на запрос, учитывая memory/task state/invariants.";
+      "Собери короткий draft-план ответа на запрос, учитывая memory/task state/invariants. Переход между этапами задачи возможен только после явной команды пользователя approve.";
     this.invariantCheckerPrompt =
       "Проверь draft-план и запрос на конфликты с инвариантами. Любой конфликт означает отказ.";
     this.finalResponderPrompt =
-      "Сформируй финальный ответ только в рамках инвариантов и активного профиля пользователя.";
+      "Сформируй финальный ответ только в рамках инвариантов и активного профиля пользователя. Не инициируй переход к следующему этапу без явного разрешения пользователя.";
     this.refusalPrompt =
       "При конфликте дай отказ, назови нарушенные инварианты и предложи безопасную альтернативу.";
 
@@ -554,6 +554,14 @@ export class Agent {
 
   continueTask() {
     return this.taskWorkflow.continueTask();
+  }
+
+  approveNextStage() {
+    return this.taskWorkflow.approveNextStage();
+  }
+
+  advanceToNextStage() {
+    return this.taskWorkflow.advanceToNextStage();
   }
 
   resetTask() {

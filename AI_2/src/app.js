@@ -888,6 +888,7 @@ function parseTaskCommand(text) {
   }
   if (/^pause$/i.test(trimmed)) return { type: "pause" };
   if (/^continue$/i.test(trimmed)) return { type: "continue" };
+  if (/^approve$/i.test(trimmed)) return { type: "approve" };
   if (/^reset task$/i.test(trimmed)) return { type: "reset_task" };
   return null;
 }
@@ -963,15 +964,50 @@ async function handleTaskCommandOrStep(text) {
       to: resumedState.stage || "idle",
     });
     if (isActiveTaskStage(resumedState.stage)) {
-      const result = await agent.runTaskStep({ userMessage: text });
-      pushStageChangedMessage(result.transition);
-      pushAssistantMessage(result.text);
+      if (resumedState.expectedAction === "await_approval") {
+        pushAssistantMessage(
+          "Восстановлен этап. Можно отправить доработки текущего этапа или approve для перехода дальше.",
+        );
+      } else {
+        const result = await agent.runTaskStep({ userMessage: text });
+        pushStageChangedMessage(result.transition);
+        pushAssistantMessage(result.text);
+      }
     } else {
       pushAssistantMessage(
         pausedFrom
           ? `Продолжение выполнено. Восстановлен этап ${pausedFrom.stage}, шаг ${pausedFrom.step}.`
           : "Продолжение выполнено.",
       );
+    }
+    return true;
+  }
+
+  if (command && command.type === "approve") {
+    if (!isActiveTaskStage(stage)) {
+      pushAssistantMessage(
+        "Подтверждение перехода недоступно: нет активного этапа planning/execution/validation.",
+      );
+      return true;
+    }
+    const ok = agent.approveNextStage();
+    if (!ok) {
+      pushAssistantMessage(
+        "Сначала заверши текущий этап (получи артефакт), затем отправь approve.",
+      );
+      return true;
+    }
+    const changed = agent.advanceToNextStage();
+    pushStageChangedMessage(changed);
+    const nextStage = agent.taskState && agent.taskState.stage
+      ? agent.taskState.stage
+      : "idle";
+    if (isActiveTaskStage(nextStage)) {
+      pushAssistantMessage(
+        `Переход подтверждён. Текущий этап: ${nextStage}. Отправьте сообщение для выполнения шага.`,
+      );
+    } else {
+      pushAssistantMessage("Переход подтверждён. Задача завершена.");
     }
     return true;
   }

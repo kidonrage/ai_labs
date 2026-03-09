@@ -1,9 +1,36 @@
 class TaskStageWorkflow {
+  static allowedTransitions() {
+    return {
+      idle: new Set(["planning"]),
+      planning: new Set(["execution", "paused"]),
+      execution: new Set(["validation", "paused"]),
+      validation: new Set(["done", "paused"]),
+      paused: new Set(["planning", "execution", "validation"]),
+      done: new Set([]),
+    };
+  }
+
+  static _isForwardTaskTransition(fromStage, toStage) {
+    return (
+      (fromStage === "planning" && toStage === "execution") ||
+      (fromStage === "execution" && toStage === "validation") ||
+      (fromStage === "validation" && toStage === "done")
+    );
+  }
+
+  static _nextStageFor(stage) {
+    if (stage === "planning") return "execution";
+    if (stage === "execution") return "validation";
+    if (stage === "validation") return "done";
+    return null;
+  }
+
   static makeDefaultTaskState() {
     return {
       stage: "idle",
       step: 0,
       expectedAction: null,
+      advanceApprovedFromStage: null,
       pausedFrom: null,
       artifacts: {
         userGoal: null,
@@ -33,6 +60,10 @@ class TaskStageWorkflow {
     const expectedAction = typeof raw.expectedAction === "string" && raw.expectedAction.trim()
       ? raw.expectedAction.trim()
       : null;
+    const advanceApprovedFromStage =
+      typeof raw.advanceApprovedFromStage === "string" && raw.advanceApprovedFromStage.trim()
+        ? raw.advanceApprovedFromStage.trim()
+        : null;
 
     const pausedFromRaw = raw.pausedFrom && typeof raw.pausedFrom === "object" && !Array.isArray(raw.pausedFrom)
       ? raw.pausedFrom
@@ -41,6 +72,16 @@ class TaskStageWorkflow {
       ? {
           stage: pausedFromRaw.stage,
           step: Math.max(0, Math.floor(pausedFromRaw.step)),
+          expectedAction:
+            typeof pausedFromRaw.expectedAction === "string" &&
+            pausedFromRaw.expectedAction.trim()
+              ? pausedFromRaw.expectedAction.trim()
+              : null,
+          advanceApprovedFromStage:
+            typeof pausedFromRaw.advanceApprovedFromStage === "string" &&
+            pausedFromRaw.advanceApprovedFromStage.trim()
+              ? pausedFromRaw.advanceApprovedFromStage.trim()
+              : null,
         }
       : null;
 
@@ -54,6 +95,7 @@ class TaskStageWorkflow {
       stage,
       step,
       expectedAction,
+      advanceApprovedFromStage,
       pausedFrom,
       artifacts: {
         userGoal: normalizeArtifact(artifactsRaw.userGoal),
@@ -104,10 +146,26 @@ class TaskStageWorkflow {
 
   transitionTo(nextStage, expectedAction) {
     const prev = this._state();
+    const allowed = TaskStageWorkflow.allowedTransitions();
+    const nextAllowed = allowed[prev.stage];
+    if (!(nextAllowed instanceof Set) || !nextAllowed.has(nextStage)) {
+      throw new Error(
+        `Недопустимый переход этапа: ${prev.stage} -> ${nextStage}`,
+      );
+    }
+    if (
+      TaskStageWorkflow._isForwardTaskTransition(prev.stage, nextStage) &&
+      prev.advanceApprovedFromStage !== prev.stage
+    ) {
+      throw new Error(
+        `Переход ${prev.stage} -> ${nextStage} запрещён: нет явного разрешения пользователя.`,
+      );
+    }
     this._setState({
       ...prev,
       stage: nextStage,
       expectedAction,
+      advanceApprovedFromStage: null,
       pausedFrom: nextStage === "paused" ? prev.pausedFrom : null,
     });
     this.emitStateChanged();
@@ -121,6 +179,7 @@ class TaskStageWorkflow {
       stage: "planning",
       step: 1,
       expectedAction: "generate_plan",
+      advanceApprovedFromStage: null,
       pausedFrom: null,
       artifacts: {
         userGoal: goal,
@@ -141,6 +200,8 @@ class TaskStageWorkflow {
       pausedFrom: {
         stage: state.stage,
         step: state.step,
+        expectedAction: state.expectedAction,
+        advanceApprovedFromStage: state.advanceApprovedFromStage,
       },
     });
     this.transitionTo("paused", "continue");
@@ -157,7 +218,16 @@ class TaskStageWorkflow {
       stage: restoredStage,
       step: restoredStep,
       pausedFrom: null,
-      expectedAction: this._expectedActionForStage(restoredStage),
+      advanceApprovedFromStage:
+        typeof state.pausedFrom.advanceApprovedFromStage === "string" &&
+        state.pausedFrom.advanceApprovedFromStage.trim()
+          ? state.pausedFrom.advanceApprovedFromStage.trim()
+          : null,
+      expectedAction:
+        typeof state.pausedFrom.expectedAction === "string" &&
+        state.pausedFrom.expectedAction.trim()
+          ? state.pausedFrom.expectedAction.trim()
+          : this._expectedActionForStage(restoredStage),
     });
     this.emitStateChanged();
     return true;
@@ -166,6 +236,44 @@ class TaskStageWorkflow {
   resetTask() {
     this._setState(TaskStageWorkflow.makeDefaultTaskState());
     this.emitStateChanged();
+  }
+
+  approveNextStage() {
+    const state = this._state();
+    if (!["planning", "execution", "validation"].includes(state.stage)) {
+      return false;
+    }
+    const requiredArtifactByStage = {
+      planning: "plan",
+      execution: "draft",
+      validation: "validation",
+    };
+    const artifactKey = requiredArtifactByStage[state.stage];
+    const artifactValue =
+      state.artifacts && typeof state.artifacts[artifactKey] === "string"
+        ? state.artifacts[artifactKey].trim()
+        : "";
+    if (!artifactValue) {
+      return false;
+    }
+    this._setState({
+      ...state,
+      advanceApprovedFromStage: state.stage,
+      expectedAction: "advance_stage",
+    });
+    this.emitStateChanged();
+    return true;
+  }
+
+  advanceToNextStage() {
+    const state = this._state();
+    const nextStage = TaskStageWorkflow._nextStageFor(state.stage);
+    if (!nextStage) {
+      throw new Error(
+        `Невозможно перейти к следующему этапу из состояния ${state.stage}.`,
+      );
+    }
+    return this.transitionTo(nextStage, this._expectedActionForStage(nextStage));
   }
 
   _buildTaskStepInput(stage, context = {}) {
@@ -183,6 +291,7 @@ class TaskStageWorkflow {
 
     const parts = [];
     parts.push("SYSTEM: Ты выполняешь шаг конечного автомата задачи.");
+    parts.push("Межэтапный переход выполняется только после явной команды пользователя approve.");
     parts.push(`STAGE: ${stage}`);
     parts.push(`STEP: ${ts.step}`);
     parts.push(`EXPECTED_ACTION: ${ts.expectedAction || "null"}`);
@@ -257,16 +366,20 @@ class TaskStageWorkflow {
     if (stage === "planning") {
       next.artifacts.plan = answerText;
       next.step += 1;
+      next.expectedAction = "await_approval";
+      next.advanceApprovedFromStage = null;
       this._setState(next);
-      const changed = this.transitionTo("execution", "execute");
-      return { text: answerText, transition: changed };
+      this.emitStateChanged();
+      return { text: answerText, transition: { from: stage, to: stage } };
     }
     if (stage === "execution") {
       next.artifacts.draft = answerText;
       next.step += 1;
+      next.expectedAction = "await_approval";
+      next.advanceApprovedFromStage = null;
       this._setState(next);
-      const changed = this.transitionTo("validation", "validate");
-      return { text: answerText, transition: changed };
+      this.emitStateChanged();
+      return { text: answerText, transition: { from: stage, to: stage } };
     }
 
     const finalRawText = await this.runTaskLLMStep(
@@ -285,11 +398,14 @@ class TaskStageWorkflow {
     }
     next.artifacts.validation = answerText;
     next.artifacts.draft = finalText;
+    next.step += 1;
+    next.expectedAction = "await_approval";
+    next.advanceApprovedFromStage = null;
     this._setState(next);
-    const changed = this.transitionTo("done", null);
     const combinedText =
       `Validation review:\n${answerText}\n\nFinal result:\n${finalText}`;
-    return { text: combinedText, transition: changed };
+    this.emitStateChanged();
+    return { text: combinedText, transition: { from: stage, to: stage } };
   }
 }
 
