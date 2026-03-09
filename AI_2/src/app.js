@@ -57,10 +57,6 @@ function makeBranchId() {
   return (crypto.randomUUID && crypto.randomUUID()) || `branch_${Date.now()}_${Math.random()}`;
 }
 
-function makeCheckpointId() {
-  return (crypto.randomUUID && crypto.randomUUID()) || `cp_${Date.now()}_${Math.random()}`;
-}
-
 function makeProfileId() {
   return (crypto.randomUUID && crypto.randomUUID()) || `profile_${Date.now()}_${Math.random()}`;
 }
@@ -118,24 +114,6 @@ function defaultTotals() {
     requestTotalTokens: 0,
     costRub: 0,
   };
-}
-
-function nextBranchTitle(branches) {
-  let maxNum = 0;
-  for (const b of branches || []) {
-    const m = /^Ветка\s+(\d+)$/i.exec(b.title || "");
-    if (m) maxNum = Math.max(maxNum, Number(m[1]));
-  }
-  return `Ветка ${maxNum + 1}`;
-}
-
-function nextCheckpointTitle(checkpoints) {
-  let maxNum = 0;
-  for (const cp of checkpoints || []) {
-    const m = /^Checkpoint\s+(\d+)$/i.exec(cp.title || "");
-    if (m) maxNum = Math.max(maxNum, Number(m[1]));
-  }
-  return `Checkpoint ${maxNum + 1}`;
 }
 
 function makeDefaultBranching(baseState) {
@@ -809,19 +787,6 @@ function deleteProfile(profileId) {
   persistStore();
 }
 
-function switchToBranch(branchId) {
-  const chat = getActiveChat();
-  if (!chat) return;
-
-  chat.branching = normalizeBranching(chat.branching, chat.state || {});
-  if (!chat.branching.branches.some((b) => b.id === branchId)) return;
-
-  chat.branching.activeBranchId = branchId;
-  chat.updatedAt = new Date().toISOString();
-  bindAgentToActiveChat();
-  persistStore();
-}
-
 function createChat(strategyValue) {
   const currentApiKey = getEffectiveApiKey();
   const chatId = makeChatId();
@@ -951,98 +916,6 @@ function deleteActiveChat() {
   const next = store.chats[Math.max(0, idx - 1)] || store.chats[0];
   activeChatId = next.id;
   switchToChat(activeChatId);
-}
-
-function saveCheckpoint() {
-  const chat = getActiveChat();
-  const branch = getActiveBranch(chat);
-  if (!chat || !branch || !agent) return;
-
-  if (normalizeContextStrategy(chat.contextStrategy) !== "branching") {
-    window.alert("Checkpoint доступен только для стратегии Branching.");
-    return;
-  }
-
-  chat.branching = normalizeBranching(chat.branching, chat.state || {});
-
-  const snapshot = agent.exportState();
-  const checkpoint = {
-    id: makeCheckpointId(),
-    title: nextCheckpointTitle(chat.branching.checkpoints),
-    branchId: branch.id,
-    createdAt: new Date().toISOString(),
-    messageCount: Array.isArray(snapshot.history) ? snapshot.history.length : 0,
-    state: clonePlain(snapshot),
-  };
-
-  chat.branching.checkpoints.push(checkpoint);
-  chat.branching.selectedCheckpointId = checkpoint.id;
-  chat.updatedAt = new Date().toISOString();
-  persistStore();
-  renderBranchingControls();
-
-  addMessage({
-    role: "assistant",
-    text: `Сохранён ${checkpoint.title} для ветки "${branch.title}".`,
-    meta: { statsLines: [] },
-  });
-}
-
-function createBranchFromCheckpoint() {
-  const chat = getActiveChat();
-  if (!chat) return;
-
-  if (normalizeContextStrategy(chat.contextStrategy) !== "branching") {
-    window.alert("Ответвление доступно только для стратегии Branching.");
-    return;
-  }
-
-  chat.branching = normalizeBranching(chat.branching, chat.state || {});
-
-  const select = $("checkpointSelect");
-  const checkpointId = select && typeof select.value === "string"
-    ? select.value
-    : (chat.branching.selectedCheckpointId || "");
-
-  if (!checkpointId) {
-    window.alert("Сначала сохраните checkpoint.");
-    return;
-  }
-
-  const checkpoint = chat.branching.checkpoints.find((cp) => cp.id === checkpointId);
-  if (!checkpoint) {
-    window.alert("Выбранный checkpoint не найден.");
-    return;
-  }
-
-  const branchId = makeBranchId();
-  const now = new Date().toISOString();
-
-  const newBranch = {
-    id: branchId,
-    title: nextBranchTitle(chat.branching.branches),
-    parentBranchId: checkpoint.branchId,
-    parentCheckpointId: checkpoint.id,
-    createdAt: now,
-    updatedAt: now,
-    state: clonePlain(checkpoint.state),
-  };
-
-  chat.branching.branches.push(newBranch);
-  chat.branching.activeBranchId = branchId;
-  chat.branching.selectedCheckpointId = checkpoint.id;
-  chat.updatedAt = now;
-  chat.state = clonePlain(newBranch.state);
-
-  renderChatSelector();
-  bindAgentToActiveChat();
-  persistStore();
-
-  addMessage({
-    role: "assistant",
-    text: `Создана ${newBranch.title} от ${checkpoint.title}. Теперь ветки независимы.`,
-    meta: { statsLines: [] },
-  });
 }
 
 function syncAgentConfig() {

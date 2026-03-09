@@ -19,7 +19,3 @@ export function loadState() {
 export function saveState(stateObj) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(stateObj, null, 2));
 }
-
-export function clearState() {
-  localStorage.removeItem(STORAGE_KEY);
-}
