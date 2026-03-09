@@ -11,17 +11,6 @@ import {
 import { formatInvariantRefusal as buildInvariantRefusalText } from "./refusal-formatter.js";
 import { TaskStageWorkflow } from "./task-stage-workflow.js";
 
-const DEFAULT_CONTEXT_STRATEGY = "sticky_facts";
-const CONTEXT_STRATEGIES = new Set([
-  "sliding_window",
-  "sticky_facts",
-  "branching",
-]);
-
-function normalizeContextStrategy(value) {
-  return CONTEXT_STRATEGIES.has(value) ? value : DEFAULT_CONTEXT_STRATEGY;
-}
-
 function normalizeUserProfile(profile) {
   const raw = profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {};
   const prefsRaw =
@@ -229,18 +218,12 @@ export class Agent {
     return TaskStageWorkflow.normalizeTaskState(value);
   }
 
-  constructor({ baseUrl, apiKey, model, temperature, contextStrategy }) {
+  constructor({ baseUrl, apiKey, model, temperature }) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.model = model;
     this.temperature = temperature;
-    this.contextStrategy = normalizeContextStrategy(contextStrategy);
-
     this.history = [];
-
-    // Summary chunks stored separately
-    // { id, fromIndex, toIndex, at, text }
-    this.summaries = [];
     this.longTermMemory = Agent.makeDefaultLongTermMemory();
     this.workingMemory = Agent.makeDefaultWorkingMemory();
     this.taskState = Agent.makeDefaultTaskState();
@@ -259,12 +242,6 @@ export class Agent {
 
     this.contextPolicy = {
       keepLastMessages: 4,
-      chunkSize: 10,
-      maxSummaryChars: 1400,
-
-      // NEW: summarize via cheap LLM
-      summaryModel: "gpt-3.5-turbo",
-      summaryTemperature: 0.2,
       memoryModel: "gpt-3.5-turbo",
       memoryTemperature: 0.1,
     };
@@ -281,9 +258,6 @@ export class Agent {
       "При конфликте дай отказ, назови нарушенные инварианты и предложи безопасную альтернативу.";
 
     this.onStateChanged = null;
-
-    // avoid concurrent summarization
-    this._summarizeLock = Promise.resolve();
 
     this.taskWorkflow = new TaskStageWorkflow({
       getTaskState: () => this.taskState,
@@ -315,11 +289,6 @@ export class Agent {
     this._emitStateChanged();
   }
 
-  setContextStrategy(strategy) {
-    this.contextStrategy = normalizeContextStrategy(strategy);
-    this._emitStateChanged();
-  }
-
   setLongTermMemory(value) {
     this.longTermMemory = Agent.normalizeLongTermMemory(value);
     this._emitStateChanged();
@@ -345,7 +314,6 @@ export class Agent {
 
   reset() {
     this.history = [];
-    this.summaries = [];
     this.workingMemory = Agent.makeDefaultWorkingMemory();
     this.taskState = Agent.makeDefaultTaskState();
     this.lastInvariantCheck = null;
@@ -378,7 +346,6 @@ export class Agent {
         temperature: this.temperature,
       },
       systemPreamble: this.systemPreamble,
-      contextStrategy: this.contextStrategy,
       contextPolicy: this.contextPolicy,
       userProfile: this.userProfile,
       workingMemory: this.workingMemory,
@@ -386,7 +353,6 @@ export class Agent {
       invariants: this.invariants,
       lastInvariantCheck: this.lastInvariantCheck,
       shortTermMemory,
-      summaries: this.summaries,
       summaryTotals: this.summaryTotals,
       history: this.history,
     };
@@ -397,9 +363,6 @@ export class Agent {
 
     if (typeof state.systemPreamble === "string") {
       this.systemPreamble = state.systemPreamble;
-    }
-    if (typeof state.contextStrategy === "string") {
-      this.contextStrategy = normalizeContextStrategy(state.contextStrategy);
     }
     if (state.userProfile && typeof state.userProfile === "object") {
       this.userProfile = normalizeUserProfile(state.userProfile);
@@ -430,17 +393,6 @@ export class Agent {
       }
     }
 
-    if (Array.isArray(state.summaries)) {
-      this.summaries = state.summaries
-        .filter((s) => s && typeof s.text === "string")
-        .map((s) => ({
-          id: typeof s.id === "string" ? s.id : this._summaryId(),
-          fromIndex: Number.isFinite(s.fromIndex) ? s.fromIndex : 0,
-          toIndex: Number.isFinite(s.toIndex) ? s.toIndex : 0,
-          at: typeof s.at === "string" ? s.at : new Date().toISOString(),
-          text: s.text,
-        }));
-    }
     if (
       state.workingMemory &&
       typeof state.workingMemory === "object" &&
@@ -790,170 +742,6 @@ export class Agent {
     this.longTermMemory = Agent.normalizeLongTermMemory(nextLong);
   }
 
-  // =====================
-  // Summarization (LLM)
-  // =====================
-
-  _summaryId() {
-    return (
-      (crypto.randomUUID && crypto.randomUUID()) ||
-      `sum_${Date.now()}_${Math.random()}`
-    );
-  }
-
-  _getSummarizedUntilIndexExclusive() {
-    let maxTo = -1;
-    for (const s of this.summaries) {
-      if (Number.isFinite(s.toIndex)) maxTo = Math.max(maxTo, s.toIndex);
-    }
-    return maxTo + 1;
-  }
-
-  _needsSummarize() {
-    const keepLast = Math.max(
-      0,
-      Number(this.contextPolicy.keepLastMessages) || 0,
-    );
-    const chunkSize = Math.max(1, Number(this.contextPolicy.chunkSize) || 10);
-
-    const total = this.history.length;
-    if (total <= keepLast) return null;
-
-    const unsummarizedStart = Math.max(0, total - keepLast);
-    const summarizedUntil = this._getSummarizedUntilIndexExclusive();
-    const unsummarizedCount = unsummarizedStart - summarizedUntil;
-
-    if (unsummarizedCount > 0) {
-      const nextChunkSize = Math.min(chunkSize, unsummarizedCount);
-      return {
-        fromIndex: summarizedUntil,
-        toIndex: summarizedUntil + nextChunkSize - 1,
-      };
-    }
-    return null;
-  }
-
-  async _ensureSummariesUpToDate() {
-    // serialize summarization calls (avoid concurrent)
-    this._summarizeLock = this._summarizeLock.then(async () => {
-      while (true) {
-        const next = this._needsSummarize();
-        if (!next) break;
-
-        const chunk = this.history.slice(next.fromIndex, next.toIndex + 1);
-        const summaryText = await this._summarizeChunkWithLLM(chunk, next);
-
-        this.summaries.push({
-          id: this._summaryId(),
-          fromIndex: next.fromIndex,
-          toIndex: next.toIndex,
-          at: new Date().toISOString(),
-          text: this._compactText(
-            summaryText,
-            this.contextPolicy.maxSummaryChars,
-          ),
-        });
-
-        // persist totals + summaries
-        this._emitStateChanged();
-      }
-    });
-
-    return this._summarizeLock;
-  }
-
-  _compactText(text, maxChars) {
-    const m = Math.max(200, Number(maxChars) || 1400);
-    const t = String(text || "").trim();
-    if (t.length <= m) return t;
-    const head = t.slice(0, Math.floor(m * 0.75));
-    const tail = t.slice(-Math.floor(m * 0.2));
-    return `${head}\n…\n${tail}`.slice(0, m);
-  }
-
-  _chunkToTranscript(messages) {
-    // Compact transcript for summarization prompt
-    const lines = [];
-    for (const m of messages) {
-      const role = m.role === "user" ? "User" : "Assistant";
-      const txt = String(m.text || "").trim();
-      if (!txt) continue;
-      lines.push(`${role}: ${txt}`);
-    }
-    return lines.join("\n");
-  }
-
-  async _summarizeChunkWithLLM(messages, { fromIndex, toIndex }) {
-    if (!this.apiKey)
-      throw new Error("API key пустой (нужен для суммаризации).");
-
-    const transcript = this._chunkToTranscript(messages);
-
-    const instruction =
-      `Ты summarizer. Сожми диалог в структурированное summary.\n` +
-      `Правила:\n` +
-      `- 6–12 буллетов, коротко.\n` +
-      `- Сохрани: цели пользователя, важные факты, решения/выводы, ограничения, договорённости.\n` +
-      `- Не добавляй выдуманных деталей.\n` +
-      `- Пиши по-русски.\n` +
-      `Верни только summary, без прелюдий.\n`;
-
-    const input =
-      `SYSTEM: ${instruction}\n` +
-      `CONTEXT: Messages #${fromIndex}..#${toIndex}\n` +
-      `TRANSCRIPT:\n${transcript}\n` +
-      `SUMMARY:\n`;
-
-    const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
-    const body = {
-      model: this.contextPolicy.summaryModel || "gpt-3.5-turbo",
-      input,
-      temperature: Number(this.contextPolicy.summaryTemperature || 0.2),
-    };
-
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + this.apiKey,
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(
-        `Summarize HTTP ${resp.status}: ${text || resp.statusText}`,
-      );
-    }
-
-    const dto = await resp.json();
-    const summaryText = Agent.extractAnswerText(dto);
-    if (!summaryText) throw new Error("Summarize: пустой output_text.");
-
-    // accounting (NOT in chat)
-    const usage = normalizeUsage(dto);
-    const modelName = dto.model || body.model;
-
-    const costRub = usage
-      ? OpenAIModelPricing.costRub(
-          modelName,
-          usage.inputTokens,
-          usage.outputTokens,
-        )
-      : null;
-
-    if (usage) {
-      this.summaryTotals.summaryRequests += 1;
-      this.summaryTotals.summaryInputTokens += usage.inputTokens;
-      this.summaryTotals.summaryOutputTokens += usage.outputTokens;
-      this.summaryTotals.summaryTotalTokens += usage.totalTokens;
-      if (costRub != null) this.summaryTotals.summaryCostRub += costRub;
-    }
-
-    return summaryText;
-  }
-
   async _runTaskLLMStep(input) {
     if (!this.apiKey) throw new Error("API key пустой.");
     const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
@@ -1027,10 +815,7 @@ export class Agent {
 
     const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
     const body = {
-      model:
-        this.contextPolicy.memoryModel ||
-        this.contextPolicy.summaryModel ||
-        "gpt-3.5-turbo",
+      model: this.contextPolicy.memoryModel || "gpt-3.5-turbo",
       input,
       temperature: Number(this.contextPolicy.memoryTemperature ?? 0.1),
     };
@@ -1090,19 +875,7 @@ export class Agent {
 
   async _buildContextInput(nextUserText, runtimeContext = null) {
     const keepLast = this._slidingWindowSize();
-    let tail = [];
-
-    if (this.contextStrategy === "sliding_window") {
-      tail = this.history.slice(-keepLast);
-    } else if (this.contextStrategy === "sticky_facts") {
-      tail = this.history.slice(-keepLast);
-    } else {
-      // Ensure summaries exist before sending main request
-      await this._ensureSummariesUpToDate();
-      const total = this.history.length;
-      const tailStart = Math.max(0, total - keepLast);
-      tail = this.history.slice(tailStart);
-    }
+    const tail = this.history.slice(-keepLast);
 
     const parts = [];
     parts.push(`SYSTEM: ${this.systemPreamble}`);
@@ -1144,17 +917,7 @@ export class Agent {
     parts.push("SHORT-TERM MEMORY:");
     parts.push(JSON.stringify(shortTerm, null, 2));
 
-    if (
-      this.contextStrategy !== "sliding_window" &&
-      this.summaries.length > 0
-    ) {
-      parts.push("CONTEXT SUMMARY (older messages):");
-      for (const s of this.summaries) {
-        parts.push(`- ${s.text}`);
-      }
-    }
-
-    if (this.contextStrategy !== "sticky_facts" && tail.length > 0) {
+    if (tail.length > 0) {
       parts.push("RECENT MESSAGES:");
       for (const m of tail) {
         parts.push(`${m.role.toUpperCase()}: ${m.text}`);
@@ -1237,13 +1000,6 @@ export class Agent {
       durationSeconds: durationSeconds != null ? durationSeconds : undefined,
     };
     this.history.push(assistantMsg);
-
-    if (
-      this.contextStrategy !== "sliding_window" &&
-      this.contextStrategy !== "sticky_facts"
-    ) {
-      await this._ensureSummariesUpToDate();
-    }
 
     this._emitStateChanged();
 

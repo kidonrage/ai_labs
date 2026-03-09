@@ -12,25 +12,8 @@ import {
 } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
-const DEFAULT_CONTEXT_STRATEGY = "sticky_facts";
-const CONTEXT_STRATEGIES = new Set([
-  "sliding_window",
-  "sticky_facts",
-  "branching",
-]);
 const privateConfig = await loadPrivateConfig();
 const privateApiKey = getPrivateApiKey(privateConfig);
-
-function normalizeContextStrategy(value) {
-  return CONTEXT_STRATEGIES.has(value) ? value : DEFAULT_CONTEXT_STRATEGY;
-}
-
-function contextStrategyLabel(value) {
-  const strategy = normalizeContextStrategy(value);
-  if (strategy === "sliding_window") return "Sliding Window";
-  if (strategy === "branching") return "Branching (ветки диалога)";
-  return "Sticky Facts / Key-Value Memory";
-}
 
 async function loadPrivateConfig() {
   try {
@@ -252,7 +235,6 @@ function normalizeStore(raw, fallbackConfig) {
           id: c.id,
           title:
             typeof c.title === "string" && c.title.trim() ? c.title : "Чат",
-          contextStrategy: normalizeContextStrategy(c.contextStrategy),
           createdAt:
             typeof c.createdAt === "string"
               ? c.createdAt
@@ -304,7 +286,6 @@ function normalizeStore(raw, fallbackConfig) {
         {
           id: "chat_1",
           title: "Чат 1",
-          contextStrategy: DEFAULT_CONTEXT_STRATEGY,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           state: clonePlain(raw),
@@ -336,7 +317,6 @@ function normalizeStore(raw, fallbackConfig) {
       {
         id: "chat_1",
         title: "Чат 1",
-        contextStrategy: DEFAULT_CONTEXT_STRATEGY,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         state: clonePlain(initialState),
@@ -367,7 +347,6 @@ let store = normalizeStore(persisted, fallbackConfig);
 let activeChatId = store.activeChatId;
 let activeProfileId = store.activeProfileId;
 let agent = null;
-let defaultNewChatStrategy = DEFAULT_CONTEXT_STRATEGY;
 let isSending = false;
 
 function persistStore() {
@@ -561,12 +540,6 @@ function bindAgentToActiveChat() {
   const activeBranch = getActiveBranch(chat);
   if (!activeBranch) return;
 
-  const contextStrategy = normalizeContextStrategy(chat.contextStrategy);
-  const activeStrategyInput = $("activeChatContextStrategy");
-  if (activeStrategyInput) {
-    activeStrategyInput.value = contextStrategyLabel(contextStrategy);
-  }
-
   const currentApiKey = getEffectiveApiKey();
   const branchState =
     activeBranch.state && typeof activeBranch.state === "object"
@@ -593,7 +566,6 @@ function bindAgentToActiveChat() {
   if (branchState) {
     boundAgent.loadState(branchState);
   }
-  boundAgent.setContextStrategy(contextStrategy);
   boundAgent.setLongTermMemory(store.longTermMemory);
   boundAgent.setUserProfile(profileToAgentPrefs(getActiveProfile()));
 
@@ -612,7 +584,7 @@ function bindAgentToActiveChat() {
     chat.state = persistedState;
     chat.updatedAt = now;
     persistStore();
-    renderFactsPanel(contextStrategy, {
+    renderFactsPanel({
       long_term: store.longTermMemory,
       working: state.workingMemory || boundAgent.workingMemory,
       short_term: state.shortTermMemory || {
@@ -637,7 +609,7 @@ function bindAgentToActiveChat() {
     renderTaskStatus(state.taskState, { isBusy: isSending });
     renderInvariantControls();
   };
-  renderFactsPanel(contextStrategy, {
+  renderFactsPanel({
     long_term: store.longTermMemory,
     working: boundAgent.workingMemory,
     short_term: {
@@ -673,9 +645,7 @@ function bindAgentToActiveChat() {
     renderHistory(
       boundAgent.history,
       boundAgent.summaryTotals,
-      boundAgent.summaries,
       {
-        contextStrategy,
         keepLastMessages: boundAgent.contextPolicy.keepLastMessages,
       },
     );
@@ -799,10 +769,9 @@ function deleteProfile(profileId) {
   persistStore();
 }
 
-function createChat(strategyValue) {
+function createChat() {
   const currentApiKey = getEffectiveApiKey();
   const chatId = makeChatId();
-  const selectedStrategy = normalizeContextStrategy(strategyValue);
 
   const newAgent = new Agent({
     baseUrl: $("baseUrl").value.trim(),
@@ -816,7 +785,6 @@ function createChat(strategyValue) {
   const chat = {
     id: chatId,
     title: nextChatTitle(store.chats),
-    contextStrategy: selectedStrategy,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     state: clonePlain(initialState),
@@ -828,7 +796,7 @@ function createChat(strategyValue) {
 
   addMessage({
     role: "assistant",
-    text: `Новый независимый чат создан. Стратегия: ${contextStrategyLabel(selectedStrategy)}.`,
+    text: "Новый независимый чат создан.",
     meta: { statsLines: [] },
   });
 }
@@ -847,12 +815,10 @@ function createChatFromCurrent() {
 
   const now = new Date().toISOString();
   const chatId = makeChatId();
-  const selectedStrategy = normalizeContextStrategy(sourceChat.contextStrategy);
 
   const chat = {
     id: chatId,
     title: nextChatTitle(store.chats),
-    contextStrategy: selectedStrategy,
     createdAt: now,
     updatedAt: now,
     state: clonePlain(sourceState),
@@ -866,38 +832,6 @@ function createChatFromCurrent() {
     role: "assistant",
     text: "Создан новый чат на основе текущего. Дальше они независимы.",
     meta: { statsLines: [] },
-  });
-}
-
-function chooseNewChatStrategy() {
-  const dialog = $("newChatDialog");
-  const select = $("newChatDialogStrategy");
-  const cancelBtn = $("cancelNewChatDialog");
-
-  if (!dialog || !select || typeof dialog.showModal !== "function") {
-    return Promise.resolve(defaultNewChatStrategy);
-  }
-
-  select.value = normalizeContextStrategy(defaultNewChatStrategy);
-
-  return new Promise((resolve) => {
-    const onClose = () => {
-      const isCreate = dialog.returnValue === "create";
-      const chosen = isCreate ? normalizeContextStrategy(select.value) : null;
-      if (chosen) defaultNewChatStrategy = chosen;
-
-      dialog.removeEventListener("close", onClose);
-      cancelBtn?.removeEventListener("click", onCancel);
-      resolve(chosen);
-    };
-
-    const onCancel = () => {
-      dialog.close("cancel");
-    };
-
-    dialog.addEventListener("close", onClose);
-    cancelBtn?.addEventListener("click", onCancel);
-    dialog.showModal();
   });
 }
 
@@ -1088,8 +1022,7 @@ async function handleSend() {
   agent._emitStateChanged();
 
   const chat = getActiveChat();
-  renderHistory(agent.history, agent.summaryTotals, agent.summaries, {
-    contextStrategy: normalizeContextStrategy(chat && chat.contextStrategy),
+  renderHistory(agent.history, agent.summaryTotals, {
     keepLastMessages: agent.contextPolicy.keepLastMessages,
   });
 
@@ -1124,10 +1057,7 @@ async function handleSend() {
 
     typing.remove();
     const activeChat = getActiveChat();
-    renderHistory(agent.history, agent.summaryTotals, agent.summaries, {
-      contextStrategy: normalizeContextStrategy(
-        activeChat && activeChat.contextStrategy,
-      ),
+    renderHistory(agent.history, agent.summaryTotals, {
       keepLastMessages: agent.contextPolicy.keepLastMessages,
     });
   } catch (err) {
@@ -1144,10 +1074,7 @@ async function handleSend() {
     agent._emitStateChanged();
 
     const activeChat = getActiveChat();
-    renderHistory(agent.history, agent.summaryTotals, agent.summaries, {
-      contextStrategy: normalizeContextStrategy(
-        activeChat && activeChat.contextStrategy,
-      ),
+    renderHistory(agent.history, agent.summaryTotals, {
       keepLastMessages: agent.contextPolicy.keepLastMessages,
     });
   } finally {
@@ -1195,10 +1122,8 @@ $("continueTask").addEventListener("click", async () => {
   await sendTaskControlCommand("continue");
 });
 
-$("newChat").addEventListener("click", async () => {
-  const selectedStrategy = await chooseNewChatStrategy();
-  if (!selectedStrategy) return;
-  createChat(selectedStrategy);
+$("newChat").addEventListener("click", () => {
+  createChat();
 });
 
 $("branchChat").addEventListener("click", () => {

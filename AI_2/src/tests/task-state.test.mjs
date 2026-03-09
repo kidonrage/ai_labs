@@ -7,7 +7,6 @@ async function main() {
     apiKey: "test",
     model: "gpt-4.1",
     temperature: 0.2,
-    contextStrategy: "sticky_facts",
   });
 
   const answers = ["PLAN", "DRAFT", "VALIDATION", "FINAL"];

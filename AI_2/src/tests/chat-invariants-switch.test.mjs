@@ -7,7 +7,6 @@ function makeAgent() {
     apiKey: "test",
     model: "gpt-4.1",
     temperature: 0.2,
-    contextStrategy: "sticky_facts",
   });
 }
 
@@ -25,9 +24,8 @@ function bindLikeApp(chatState, profileName = "Тест") {
   const agent = makeAgent();
 
   // Mirrors current fixed order in bindAgentToActiveChat:
-  // 1) loadState, 2) setContextStrategy, 3) setLongTermMemory/setUserProfile.
+  // 1) loadState, 2) setLongTermMemory/setUserProfile.
   agent.loadState(chatState);
-  agent.setContextStrategy("sticky_facts");
   agent.setLongTermMemory(Agent.makeDefaultLongTermMemory());
   agent.setUserProfile({
     id: "p1",

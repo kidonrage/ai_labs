@@ -59,10 +59,6 @@
             <select id="chatSelect"></select>
           </label>
 
-          <label class="field">
-            <span>Стратегия активного чата</span>
-            <input id="activeChatContextStrategy" type="text" readonly />
-          </label>
           </div>
 
           <div class="controls-actions">
@@ -140,27 +136,6 @@
         <button id="send" class="btn primary" type="button">Send</button>
       </footer>
     </div>
-
-    <dialog id="newChatDialog" class="modal">
-      <form method="dialog" class="modal-form">
-        <div class="modal-title">Создать новый чат</div>
-        <label class="field">
-          <span>Стратегия контекста</span>
-          <select id="newChatDialogStrategy">
-            <option value="sliding_window">Sliding Window</option>
-            <option value="sticky_facts">Sticky Facts / Key-Value Memory</option>
-          </select>
-        </label>
-        <div class="modal-actions">
-          <button type="button" id="cancelNewChatDialog" class="btn secondary">
-            Отмена
-          </button>
-          <button type="submit" value="create" class="btn primary">
-            Создать
-          </button>
-        </div>
-      </form>
-    </dialog>
 
     <script type="module" src="src/app.js"></script>
   </body>
