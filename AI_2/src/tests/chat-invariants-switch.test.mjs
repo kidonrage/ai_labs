@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Agent } from "./agent.js";
+import { Agent } from "../agent.js";
 
 function makeAgent() {
   return new Agent({
