@@ -12,7 +12,7 @@ function makeAgent() {
 }
 
 function invariantIds(state) {
-  return (Array.isArray(state?.invariants) ? state.invariants : []).map((x) => x.id);
+  return Array.isArray(state?.invariants) ? state.invariants : [];
 }
 
 function makeChatState(invariants) {
@@ -44,62 +44,34 @@ function bindLikeApp(chatState, profileName = "Тест") {
 
 async function scenarioSwitchBetweenChatsKeepsOwnInvariantSets() {
   const chat1Invariants = [
-    {
-      id: "chat1_only",
-      title: "Только чат 1",
-      rule: "Для backend-сервисов использовать только Node.js",
-      type: "technical",
-      check: {
-        policy: {
-          type: "fixed_stack_scope",
-          allowed: "Node.js",
-          scope: "backend-сервисы",
-        },
-        forbiddenPhrases: [],
-        safeAlternative: "Использовать Node.js.",
-      },
-    },
+    "Для backend-сервисов использовать только Node.js",
   ];
 
   const chat2Invariants = [
-    {
-      id: "chat2_only",
-      title: "Только чат 2",
-      rule: "PostgreSQL нельзя заменять",
-      type: "technical",
-      check: {
-        policy: {
-          type: "cannot_replace",
-          target: "PostgreSQL",
-        },
-        forbiddenPhrases: [],
-        safeAlternative: "Оставить PostgreSQL.",
-      },
-    },
+    "PostgreSQL нельзя заменять",
   ];
 
   const chat1StateInitial = makeChatState(chat1Invariants);
   const chat2StateInitial = makeChatState(chat2Invariants);
 
   const chat1AfterFirstOpen = bindLikeApp(chat1StateInitial, "P1");
-  assert.deepEqual(invariantIds(chat1AfterFirstOpen), ["chat1_only"]);
+  assert.deepEqual(invariantIds(chat1AfterFirstOpen), ["Для backend-сервисов использовать только Node.js"]);
 
   const chat2AfterOpen = bindLikeApp(chat2StateInitial, "P2");
-  assert.deepEqual(invariantIds(chat2AfterOpen), ["chat2_only"]);
+  assert.deepEqual(invariantIds(chat2AfterOpen), ["PostgreSQL нельзя заменять"]);
 
   const chat1AfterReturn = bindLikeApp(chat1AfterFirstOpen, "P1");
-  assert.deepEqual(invariantIds(chat1AfterReturn), ["chat1_only"]);
+  assert.deepEqual(invariantIds(chat1AfterReturn), ["Для backend-сервисов использовать только Node.js"]);
 
   // Regression guard: no default invariants should reappear after switches.
   const ids = invariantIds(chat1AfterReturn);
-  assert.ok(!ids.includes("backend_stack"));
-  assert.ok(!ids.includes("db_fixed"));
-  assert.ok(!ids.includes("privacy_logs"));
+  assert.ok(!ids.includes("PostgreSQL нельзя заменять"));
+  assert.ok(!ids.includes("Персональные данные нельзя хранить в логах"));
 }
 
 async function scenarioStaleAgentCallbackIsIgnored() {
-  const chatA = { state: makeChatState([{ id: "a_only", title: "A", rule: "A", type: "general", check: { forbiddenPhrases: [], safeAlternative: "" } }]) };
-  const chatB = { state: makeChatState([{ id: "b_only", title: "B", rule: "B", type: "general", check: { forbiddenPhrases: [], safeAlternative: "" } }]) };
+  const chatA = { state: makeChatState(["A"]) };
+  const chatB = { state: makeChatState(["B"]) };
 
   let currentAgent = null;
 
@@ -122,8 +94,8 @@ async function scenarioStaleAgentCallbackIsIgnored() {
   // Simulate late event from old agent A after switching to B.
   agentA.setUserProfile({ name: "late", preferences: {} });
 
-  assert.deepEqual(invariantIds(chatA.state), ["a_only"]);
-  assert.deepEqual(invariantIds(chatB.state), ["b_only"]);
+  assert.deepEqual(invariantIds(chatA.state), ["A"]);
+  assert.deepEqual(invariantIds(chatB.state), ["B"]);
 }
 
 async function main() {

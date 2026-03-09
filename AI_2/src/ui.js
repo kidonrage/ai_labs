@@ -243,7 +243,7 @@ export function renderInvariantPanel(invariants, invariantCheck) {
     ? {
         state: check.conflict ? "conflict" : "no_conflict",
         violatedInvariants: Array.isArray(check.violatedInvariants)
-          ? check.violatedInvariants.map((item) => item.id)
+          ? check.violatedInvariants.map((item) => item.invariant)
           : [],
         allowedAlternative:
           typeof check.safeAlternative === "string" && check.safeAlternative.trim()

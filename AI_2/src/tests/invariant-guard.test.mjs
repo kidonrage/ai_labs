@@ -29,8 +29,11 @@ async function scenarioConflict() {
   const check = agent.checkInvariantConflicts(context, draft);
 
   assert.equal(check.conflict, true);
-  const violatedIds = check.violatedInvariants.map((item) => item.id).sort();
-  assert.deepEqual(violatedIds, ["backend_stack", "db_fixed"]);
+  const violated = check.violatedInvariants.map((item) => item.invariant).sort();
+  assert.deepEqual(violated, [
+    "PostgreSQL нельзя заменять",
+    "Для backend-сервисов использовать только Node.js",
+  ]);
 
   const refusal = agent.formatInvariantRefusal(check);
   assert.match(refusal, /backend/i);
@@ -45,7 +48,10 @@ async function scenarioPythonBackendConflict() {
   const check = agent.checkInvariantConflicts(context, draft);
 
   assert.equal(check.conflict, true);
-  assert.ok(check.violatedInvariants.some((item) => item.id === "backend_stack"));
+  assert.ok(
+    check.violatedInvariants.some((item) =>
+      item.invariant === "Для backend-сервисов использовать только Node.js"),
+  );
   const refusal = agent.formatInvariantRefusal(check);
   assert.match(refusal, /Node\.js/i);
 }
@@ -58,7 +64,10 @@ async function scenarioRustBackendConflict() {
   const check = agent.checkInvariantConflicts(context, draft);
 
   assert.equal(check.conflict, true);
-  assert.ok(check.violatedInvariants.some((item) => item.id === "backend_stack"));
+  assert.ok(
+    check.violatedInvariants.some((item) =>
+      item.invariant === "Для backend-сервисов использовать только Node.js"),
+  );
 }
 
 async function scenarioIgnoreInvariants() {
@@ -69,7 +78,9 @@ async function scenarioIgnoreInvariants() {
   const check = agent.checkInvariantConflicts(context, draft);
 
   assert.equal(check.conflict, true);
-  assert.ok(check.violatedInvariants.some((item) => item.id === "invariants_mandatory"));
+  assert.ok(
+    check.violatedInvariants.some((item) => item.invariant === "Обязательность инвариантов"),
+  );
   assert.match(agent.formatInvariantRefusal(check), /Не могу игнорировать инварианты/i);
 }
 

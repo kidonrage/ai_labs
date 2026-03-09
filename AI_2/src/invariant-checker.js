@@ -2,6 +2,7 @@ import { normalizeInvariants } from "./invariants.store.js";
 
 const BLOCK_INVARIANT_IGNORE_RE =
   /(ignore|игнорир(уй|овать)|обойди|отмени)[\s\S]{0,80}(invariant|инвариант|огранич|правил)/i;
+const MANDATORY_INVARIANT_LABEL = "Обязательность инвариантов";
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -19,9 +20,22 @@ function normalizeInvariantCheck(value) {
     violatedInvariants: violated
       .filter((item) => item && typeof item === "object")
       .map((item) => ({
-        id: typeof item.id === "string" ? item.id : "unknown_invariant",
+        invariant: (() => {
+          if (typeof item.invariant === "string" && item.invariant.trim()) {
+            return item.invariant.trim();
+          }
+          if (typeof item.rule === "string" && item.rule.trim()) {
+            return item.rule.trim();
+          }
+          if (typeof item.title === "string" && item.title.trim()) {
+            return item.title.trim();
+          }
+          if (typeof item.id === "string" && item.id.trim()) {
+            return item.id.trim();
+          }
+          return "Неизвестный инвариант";
+        })(),
         reason: typeof item.reason === "string" ? item.reason : "Unknown reason",
-        title: typeof item.title === "string" ? item.title : "",
       })),
     explanation: normalizeText(raw.explanation),
     safeAlternative: normalizeText(raw.safeAlternative),
@@ -42,10 +56,8 @@ function extractKeywords(text) {
 }
 
 function isRelevantInvariant(invariant, combinedText) {
-  const titleWords = extractKeywords(invariant.title);
-  const ruleWords = extractKeywords(invariant.rule);
-  const words = new Set([...titleWords, ...ruleWords]);
-  if (words.size === 0) return false;
+  const words = extractKeywords(invariant);
+  if (words.length === 0) return false;
   for (const w of words) {
     if (combinedText.includes(w)) return true;
   }
@@ -58,32 +70,7 @@ function normalizeToken(value) {
     .replace(/[^a-zа-я0-9+.#_-]+/gi, "");
 }
 
-function parseInvariantRule(rule, invariant = null) {
-  const inv =
-    invariant && typeof invariant === "object" && !Array.isArray(invariant) ? invariant : {};
-  const policy =
-    inv.check &&
-    typeof inv.check === "object" &&
-    !Array.isArray(inv.check) &&
-    inv.check.policy &&
-    typeof inv.check.policy === "object" &&
-    !Array.isArray(inv.check.policy)
-      ? inv.check.policy
-      : null;
-  if (policy && policy.type === "fixed_stack_scope") {
-    return {
-      kind: "fixed_stack_scope",
-      allowed: normalizeText(policy.allowed),
-      scope: normalizeText(policy.scope),
-    };
-  }
-  if (policy && policy.type === "cannot_replace") {
-    return {
-      kind: "cannot_replace",
-      target: normalizeText(policy.target),
-    };
-  }
-
+function parseInvariantRule(rule) {
   const text = normalizeText(rule);
   const onlyMatch = /^use\s+(.+?)\s+only\s+for\s+(.+)$/i.exec(text);
   if (onlyMatch) {
@@ -132,6 +119,9 @@ function parseInvariantRule(rule, invariant = null) {
       target: normalizeText(cannotReplaceRuB[2]),
     };
   }
+  if (/персональн.*данн.*нельзя.*лог|pii.*(cannot|must not).*(log|logs)/i.test(text)) {
+    return { kind: "no_pii_logs" };
+  }
 
   return { kind: "generic" };
 }
@@ -164,6 +154,15 @@ function hasReplaceIntent(text) {
   );
 }
 
+function asksToLogPii(text) {
+  const src = normalizeText(text).toLowerCase();
+  const hasLog = /(log|logs|logging|лог|логи|логах|логировать|логируй)/i.test(src);
+  const hasPii =
+    /(pii|personal data|passport|паспорт|персональн|личн(ые|ые данные)?|email|телефон)/i.test(src);
+  const hasStoreIntent = /(store|write|save|record|храни|сохрани|запиши|пиши)/i.test(src);
+  return hasLog && hasPii && hasStoreIntent;
+}
+
 function createDraftPlan(agentContext = {}) {
   const request = normalizeText(agentContext.userRequest);
   const taskState = agentContext.taskState && typeof agentContext.taskState === "object"
@@ -186,6 +185,27 @@ function createDraftPlan(agentContext = {}) {
   };
 }
 
+function buildSafeAlternative(violatedInvariants) {
+  const source = Array.isArray(violatedInvariants) ? violatedInvariants : [];
+  const lines = [];
+  if (source.some((item) => /node\.js/i.test(item.invariant))) {
+    lines.push("Сохраняем backend на Node.js и улучшаем архитектуру внутри текущего стека.");
+  }
+  if (source.some((item) => /postgresql/i.test(item.invariant))) {
+    lines.push("Оставляем PostgreSQL и улучшаем схему, индексы и запросы без замены СУБД.");
+  }
+  if (source.some((item) => /персональн.*данн.*лог/i.test(item.invariant))) {
+    lines.push("Убираем персональные данные из логов, используем маскирование и защищенное хранилище.");
+  }
+  if (source.some((item) => item.invariant === MANDATORY_INVARIANT_LABEL)) {
+    lines.push("Сформулируйте цель без запроса на отключение обязательных ограничений.");
+  }
+  if (lines.length === 0) {
+    return "Сохраняем текущие ограничения архитектуры, стека и данных и предлагаем безопасный вариант в этих рамках.";
+  }
+  return lines.join(" ");
+}
+
 function checkInvariantConflicts({ request, draftPlan, taskState, invariants }) {
   const normalizedRequest = normalizeText(request);
   const normalizedInvariants = normalizeInvariants(invariants, { mergeWithDefaults: false });
@@ -204,21 +224,19 @@ function checkInvariantConflicts({ request, draftPlan, taskState, invariants }) 
   const requestText = normalizedRequest.toLowerCase();
 
   const relevant = normalizedInvariants.filter((inv) => isRelevantInvariant(inv, combinedText));
-  const relevantInvariants = (relevant.length > 0 ? relevant : normalizedInvariants).map((inv) => inv.rule);
-
+  const relevantInvariants = relevant.length > 0 ? relevant : normalizedInvariants;
   const violatedInvariants = [];
 
   if (BLOCK_INVARIANT_IGNORE_RE.test(normalizedRequest)) {
     violatedInvariants.push({
-      id: "invariants_mandatory",
-      title: "Invariant policy",
+      invariant: MANDATORY_INVARIANT_LABEL,
       reason:
         "Request asks to ignore mandatory invariants, but invariants are enforced system constraints.",
     });
   }
 
   for (const inv of normalizedInvariants) {
-    const ruleSpec = parseInvariantRule(inv.rule, inv);
+    const ruleSpec = parseInvariantRule(inv);
     if (ruleSpec.kind === "fixed_stack_scope") {
       const shouldCheck = requestTouchesScope(requestText, ruleSpec.scope);
       if (shouldCheck) {
@@ -226,13 +244,10 @@ function checkInvariantConflicts({ request, draftPlan, taskState, invariants }) 
         const candidates = extractTechCandidates(requestText)
           .map((item) => ({ raw: item, token: normalizeToken(item) }))
           .filter((item) => item.token);
-        const conflictCandidate = candidates.find(
-          (item) => item.token !== allowed,
-        );
+        const conflictCandidate = candidates.find((item) => item.token !== allowed);
         if (conflictCandidate) {
           violatedInvariants.push({
-            id: inv.id,
-            title: inv.title,
+            invariant: inv,
             reason:
               `Request proposes ${conflictCandidate.raw}, but invariant fixes ${ruleSpec.scope} to ${ruleSpec.allowed}.`,
           });
@@ -251,45 +266,30 @@ function checkInvariantConflicts({ request, draftPlan, taskState, invariants }) 
         const replacement = candidates.find((item) => item.token !== target);
         if (replacement) {
           violatedInvariants.push({
-            id: inv.id,
-            title: inv.title,
+            invariant: inv,
             reason:
               `Request replaces ${ruleSpec.target} with ${replacement.raw}, which violates fixed technology invariant.`,
           });
           continue;
         }
         violatedInvariants.push({
-          id: inv.id,
-          title: inv.title,
+          invariant: inv,
           reason: `Request attempts to replace ${ruleSpec.target}, which is not allowed by invariant.`,
         });
-        continue;
       }
     }
 
-    const forbidden =
-      inv.check && Array.isArray(inv.check.forbiddenPhrases) ? inv.check.forbiddenPhrases : [];
-    const matched = forbidden.find((phrase) => phrase && combinedText.includes(phrase));
-    if (!matched) continue;
-    violatedInvariants.push({
-      id: inv.id,
-      title: inv.title,
-      reason: `Request/draft contains "${matched}", which conflicts with invariant rule: ${inv.rule}`,
-    });
+    if (ruleSpec.kind === "no_pii_logs" && asksToLogPii(requestText)) {
+      violatedInvariants.push({
+        invariant: inv,
+        reason: "Request asks to store personal data in logs, which violates privacy invariant.",
+      });
+    }
   }
 
   const uniqueViolated = Array.from(
-    new Map(violatedInvariants.map((item) => [item.id, item])).values(),
+    new Map(violatedInvariants.map((item) => [item.invariant, item])).values(),
   );
-
-  const safeAlternatives = normalizedInvariants
-    .filter((inv) => uniqueViolated.some((v) => v.id === inv.id))
-    .map((inv) => inv.check.safeAlternative)
-    .filter(Boolean);
-
-  const safeAlternative = safeAlternatives.length > 0
-    ? safeAlternatives.join(" ")
-    : "Keep existing architecture constraints and propose improvements within current stack and data rules.";
 
   return normalizeInvariantCheck({
     request: normalizedRequest,
@@ -300,8 +300,13 @@ function checkInvariantConflicts({ request, draftPlan, taskState, invariants }) 
       uniqueViolated.length > 0
         ? "Request conflicts with one or more mandatory invariants."
         : "No invariant conflicts detected for the current request.",
-    safeAlternative: uniqueViolated.length > 0 ? safeAlternative : "",
+    safeAlternative: uniqueViolated.length > 0 ? buildSafeAlternative(uniqueViolated) : "",
   });
 }
 
-export { createDraftPlan, checkInvariantConflicts, normalizeInvariantCheck };
+export {
+  MANDATORY_INVARIANT_LABEL,
+  createDraftPlan,
+  checkInvariantConflicts,
+  normalizeInvariantCheck,
+};

@@ -537,23 +537,21 @@ function renderInvariantControls() {
   const invariants = Array.isArray(agent.invariants) ? agent.invariants : [];
   const prevValue = select.value;
   select.innerHTML = "";
+  const toInvariantText = (inv) => (typeof inv === "string" ? inv : JSON.stringify(inv));
 
   for (const inv of invariants) {
     const opt = document.createElement("option");
-    opt.value = inv.id;
-    const title =
-      typeof inv.title === "string" && inv.title.trim()
-        ? inv.title.trim()
-        : inv.id;
-    opt.textContent = `${title} (${inv.id})`;
+    const text = toInvariantText(inv);
+    opt.value = text;
+    opt.textContent = text;
     select.appendChild(opt);
   }
 
-  const hasPrev = invariants.some((inv) => inv.id === prevValue);
+  const hasPrev = invariants.some((inv) => toInvariantText(inv) === prevValue);
   if (hasPrev) {
     select.value = prevValue;
   } else if (invariants[0]) {
-    select.value = invariants[0].id;
+    select.value = toInvariantText(invariants[0]);
   }
 
   if (removeBtn) {
@@ -562,45 +560,14 @@ function renderInvariantControls() {
 }
 
 function promptInvariantDraft() {
-  const idRaw = window.prompt("ID инварианта (латиница/подчеркивания):", "");
-  if (idRaw == null) return null;
-  const id = idRaw.trim().replace(/\s+/g, "_").toLowerCase();
-  if (!id) {
-    window.alert("ID не может быть пустым.");
-    return null;
-  }
-
-  const titleRaw = window.prompt("Название инварианта:", "");
-  if (titleRaw == null) return null;
-  const title = titleRaw.trim();
-  if (!title) {
-    window.alert("Название не может быть пустым.");
-    return null;
-  }
-
-  const ruleRaw = window.prompt("Правило инварианта:", "");
-  if (ruleRaw == null) return null;
-  const rule = ruleRaw.trim();
+  const raw = window.prompt("Текст инварианта:", "");
+  if (raw == null) return null;
+  const rule = raw.trim();
   if (!rule) {
     window.alert("Правило не может быть пустым.");
     return null;
   }
-
-  const typeRaw = window.prompt("Тип (technical/business/general):", "general");
-  if (typeRaw == null) return null;
-  const type = typeRaw.trim() || "general";
-
-  return {
-    id: id.slice(0, 60),
-    title: title.slice(0, 120),
-    rule: rule.slice(0, 300),
-    type: type.slice(0, 40),
-    check: {
-      forbiddenPhrases: [],
-      safeAlternative: "",
-      policy: null,
-    },
-  };
+  return rule.slice(0, 300);
 }
 
 function addInvariant() {
@@ -611,8 +578,9 @@ function addInvariant() {
   const current = Array.isArray(agent.invariants)
     ? clonePlain(agent.invariants)
     : [];
-  if (current.some((inv) => inv.id === draft.id)) {
-    window.alert(`Инвариант с id "${draft.id}" уже существует.`);
+  const normalizedDraft = draft.toLowerCase();
+  if (current.some((inv) => typeof inv === "string" && inv.toLowerCase() === normalizedDraft)) {
+    window.alert("Такой инвариант уже существует.");
     return;
   }
   current.push(draft);
@@ -624,14 +592,17 @@ function removeSelectedInvariant() {
   if (!agent) return;
   const select = $("invariantSelect");
   if (!select || !select.value) return;
-  const id = select.value;
-  const ok = window.confirm(`Удалить инвариант "${id}"?`);
+  const invariant = select.value;
+  const ok = window.confirm(`Удалить инвариант "${invariant}"?`);
   if (!ok) return;
 
   const current = Array.isArray(agent.invariants)
     ? clonePlain(agent.invariants)
     : [];
-  const next = current.filter((inv) => inv && inv.id !== id);
+  const next = current.filter((inv) => {
+    const text = typeof inv === "string" ? inv : JSON.stringify(inv);
+    return text !== invariant;
+  });
   agent.setInvariants(next);
   renderInvariantControls();
 }
