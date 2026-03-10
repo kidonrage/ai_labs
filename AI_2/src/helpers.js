@@ -1,12 +1,47 @@
 // /src/helpers.js
 export function normalizeUsage(dto) {
   const u = dto && dto.usage ? dto.usage : null;
-  const input = u && Number.isFinite(u.input_tokens) ? u.input_tokens : null;
-  const output = u && Number.isFinite(u.output_tokens) ? u.output_tokens : null;
-  const total = u && Number.isFinite(u.total_tokens) ? u.total_tokens : null;
+  const toFiniteNumber = (value) => {
+    if (Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "") {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  };
 
-  if (input == null || output == null || total == null) return null;
-  return { inputTokens: input, outputTokens: output, totalTokens: total };
+  const pick = (...values) => {
+    for (const v of values) {
+      const n = toFiniteNumber(v);
+      if (n != null) return n;
+    }
+    return null;
+  };
+
+  const input = u
+    ? pick(
+        u.input_tokens,
+        u.inputTokens,
+        u.prompt_tokens,
+        u.promptTokens,
+      )
+    : null;
+  const output = u
+    ? pick(
+        u.output_tokens,
+        u.outputTokens,
+        u.completion_tokens,
+        u.completionTokens,
+      )
+    : null;
+  const total = u ? pick(u.total_tokens, u.totalTokens) : null;
+
+  if (input == null || output == null) return null;
+  return {
+    inputTokens: input,
+    outputTokens: output,
+    totalTokens: total != null ? total : input + output,
+  };
 }
 
 export function computeHistoryTotals(history) {

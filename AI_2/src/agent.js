@@ -9,6 +9,26 @@ import {
 import { formatInvariantRefusal as buildInvariantRefusalText } from "./refusal-formatter.js";
 import { TaskStageWorkflow } from "./task-stage-workflow.js";
 
+const RESPONSE_TOOLS = Object.freeze([
+  Object.freeze({
+    type: "mcp",
+    allowed_tools: Object.freeze([
+      "get_weather_forecast",
+      "geocode_location",
+      "get_historical_weather",
+      "get_air_quality",
+      "get_marine_forecast",
+      "interpret_weather_code",
+    ]),
+    headers: null,
+    require_approval: "never",
+    server_description:
+      "Public read-only weather service powered by Open-Meteo for forecast, air quality, marine, and geocoding data.",
+    server_label: "weather",
+    server_url: "https://weather.chukai.io/mcp",
+  }),
+]);
+
 function normalizeUserProfile(profile) {
   const raw =
     profile && typeof profile === "object" && !Array.isArray(profile)
@@ -789,14 +809,23 @@ export class Agent {
     this.longTermMemory = Agent.normalizeLongTermMemory(nextLong);
   }
 
+  _buildResponseRequestBody({ model, input, temperature }) {
+    return {
+      model,
+      input,
+      temperature: Number(temperature),
+      tools: RESPONSE_TOOLS,
+    };
+  }
+
   async _runTaskLLMStep(input) {
     if (!this.apiKey) throw new Error("API key пустой.");
     const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
-    const body = {
+    const body = this._buildResponseRequestBody({
       model: this.model,
       input,
-      temperature: Number(this.temperature),
-    };
+      temperature: this.temperature,
+    });
 
     const resp = await fetch(url, {
       method: "POST",
@@ -813,7 +842,7 @@ export class Agent {
     }
 
     const dto = await resp.json();
-    const answerText = Agent.extractAnswerText(dto);
+    const answerText = Agent.extractUserVisibleAnswer(dto);
     if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
     return answerText;
   }
@@ -862,11 +891,11 @@ export class Agent {
       `JSON:\n`;
 
     const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
-    const body = {
+    const body = this._buildResponseRequestBody({
       model: this.contextPolicy.memoryModel || "gpt-3.5-turbo",
       input,
-      temperature: Number(this.contextPolicy.memoryTemperature ?? 0.1),
-    };
+      temperature: this.contextPolicy.memoryTemperature ?? 0.1,
+    });
 
     const resp = await fetch(url, {
       method: "POST",
@@ -992,11 +1021,11 @@ export class Agent {
       invariantCheck,
     });
     const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
-    const body = {
+    const body = this._buildResponseRequestBody({
       model: this.model,
       input,
-      temperature: Number(this.temperature),
-    };
+      temperature: this.temperature,
+    });
 
     const resp = await fetch(url, {
       method: "POST",
@@ -1013,7 +1042,7 @@ export class Agent {
     }
 
     const dto = await resp.json();
-    const answerText = Agent.extractAnswerText(dto);
+    const answerText = Agent.extractUserVisibleAnswer(dto);
     if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
 
     const usage = normalizeUsage(dto);
@@ -1129,5 +1158,28 @@ export class Agent {
     );
     const t = textItem ? textItem.text : null;
     return (t || "").trim() || null;
+  }
+
+  static extractMcpCallNames(dto) {
+    const output = Array.isArray(dto.output) ? dto.output : [];
+    const names = [];
+    for (const item of output) {
+      if (!item || item.type !== "mcp_call" || typeof item.name !== "string") {
+        continue;
+      }
+      const name = item.name.trim();
+      if (!name || names.includes(name)) continue;
+      names.push(name);
+    }
+    return names;
+  }
+
+  static extractUserVisibleAnswer(dto) {
+    const mcpCallNames = Agent.extractMcpCallNames(dto);
+    const answerText = Agent.extractAnswerText(dto);
+    const parts = [];
+    if (mcpCallNames.length > 0) parts.push(mcpCallNames.join("\n"));
+    if (answerText) parts.push(answerText);
+    return parts.join("\n\n").trim() || null;
   }
 }
