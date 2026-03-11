@@ -2,6 +2,13 @@ import { OpenAIModelPricing } from "./pricing.js";
 import { normalizeUsage } from "./helpers.js";
 import { normalizeInvariants } from "./invariants.store.js";
 import {
+  API_MODES,
+  endpointForApiMode,
+  inferApiMode,
+  isOllamaFamilyMode,
+  requiresAuthorization,
+} from "./api-profiles.js";
+import {
   createDraftPlan as createInvariantDraftPlan,
   checkInvariantConflicts as runInvariantChecker,
   normalizeInvariantCheck,
@@ -248,7 +255,8 @@ export class Agent {
     return TaskStageWorkflow.normalizeTaskState(value);
   }
 
-  constructor({ baseUrl, apiKey, model, temperature }) {
+  constructor({ apiMode, baseUrl, apiKey, model, temperature }) {
+    this.apiMode = inferApiMode(apiMode, baseUrl);
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.model = model;
@@ -308,7 +316,8 @@ export class Agent {
     });
   }
 
-  setConfig({ baseUrl, apiKey, model, temperature }) {
+  setConfig({ apiMode, baseUrl, apiKey, model, temperature }) {
+    this.apiMode = inferApiMode(apiMode, baseUrl);
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.model = model;
@@ -372,6 +381,7 @@ export class Agent {
       version: 7,
       savedAt: new Date().toISOString(),
       config: {
+        apiMode: this.apiMode,
         baseUrl: this.baseUrl,
         apiKey: null,
         model: this.model,
@@ -401,6 +411,9 @@ export class Agent {
     }
 
     if (state.config && typeof state.config === "object") {
+      if (typeof state.config.apiMode === "string") {
+        this.apiMode = inferApiMode(state.config.apiMode, state.config.baseUrl);
+      }
       if (typeof state.config.baseUrl === "string")
         this.baseUrl = state.config.baseUrl;
       if (typeof state.config.model === "string")
@@ -809,7 +822,38 @@ export class Agent {
     this.longTermMemory = Agent.normalizeLongTermMemory(nextLong);
   }
 
+  _endpointUrl() {
+    return endpointForApiMode(this.apiMode, this.baseUrl);
+  }
+
+  _requestHeaders() {
+    const headers = {
+      "Content-Type": "application/json",
+    };
+    if (requiresAuthorization(this.apiMode)) {
+      if (!this.apiKey) throw new Error("API key пустой.");
+      headers.Authorization = "Bearer " + this.apiKey;
+    }
+    return headers;
+  }
+
   _buildResponseRequestBody({ model, input, temperature }) {
+    if (isOllamaFamilyMode(this.apiMode)) {
+      return {
+        model,
+        messages: [
+          {
+            role: "user",
+            content: String(input || ""),
+          },
+        ],
+        stream: false,
+        options: {
+          temperature: Number(temperature),
+        },
+      };
+    }
+
     return {
       model,
       input,
@@ -818,9 +862,15 @@ export class Agent {
     };
   }
 
+  _memoryModelName() {
+    if (isOllamaFamilyMode(this.apiMode)) {
+      return this.model;
+    }
+    return this.contextPolicy.memoryModel || "gpt-3.5-turbo";
+  }
+
   async _runTaskLLMStep(input) {
-    if (!this.apiKey) throw new Error("API key пустой.");
-    const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
+    const url = this._endpointUrl();
     const body = this._buildResponseRequestBody({
       model: this.model,
       input,
@@ -829,10 +879,7 @@ export class Agent {
 
     const resp = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + this.apiKey,
-      },
+      headers: this._requestHeaders(),
       body: JSON.stringify(body),
     });
 
@@ -842,7 +889,7 @@ export class Agent {
     }
 
     const dto = await resp.json();
-    const answerText = Agent.extractUserVisibleAnswer(dto);
+    const answerText = Agent.extractUserVisibleAnswer(dto, this.apiMode);
     if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
     return answerText;
   }
@@ -852,7 +899,10 @@ export class Agent {
   }
 
   async _updateMemoryWithLLM(nextUserText) {
-    if (!this.apiKey)
+    if (this.apiMode === API_MODES.OLLAMA_MCP_CHAT) {
+      return;
+    }
+    if (requiresAuthorization(this.apiMode) && !this.apiKey)
       throw new Error("API key пустой (нужен для memory update).");
 
     const keepLast = this._slidingWindowSize();
@@ -890,19 +940,16 @@ export class Agent {
       `USER_MESSAGE:\n${String(nextUserText || "").trim()}\n` +
       `JSON:\n`;
 
-    const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
+    const url = this._endpointUrl();
     const body = this._buildResponseRequestBody({
-      model: this.contextPolicy.memoryModel || "gpt-3.5-turbo",
+      model: this._memoryModelName(),
       input,
       temperature: this.contextPolicy.memoryTemperature ?? 0.1,
     });
 
     const resp = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + this.apiKey,
-      },
+      headers: this._requestHeaders(),
       body: JSON.stringify(body),
     });
 
@@ -912,7 +959,7 @@ export class Agent {
     }
 
     const dto = await resp.json();
-    const memoryText = Agent.extractAnswerText(dto);
+    const memoryText = Agent.extractAnswerText(dto, this.apiMode);
     if (!memoryText) throw new Error("Memory: пустой output_text.");
 
     const parsed = this._extractJsonObject(memoryText);
@@ -1020,7 +1067,7 @@ export class Agent {
       draftPlan,
       invariantCheck,
     });
-    const url = this.baseUrl.replace(/\/+$/, "") + "/openai/v1/responses";
+    const url = this._endpointUrl();
     const body = this._buildResponseRequestBody({
       model: this.model,
       input,
@@ -1029,10 +1076,7 @@ export class Agent {
 
     const resp = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + this.apiKey,
-      },
+      headers: this._requestHeaders(),
       body: JSON.stringify(body),
     });
 
@@ -1042,14 +1086,11 @@ export class Agent {
     }
 
     const dto = await resp.json();
-    const answerText = Agent.extractUserVisibleAnswer(dto);
+    const answerText = Agent.extractUserVisibleAnswer(dto, this.apiMode);
     if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
 
     const usage = normalizeUsage(dto);
-    const durationSeconds =
-      Number.isFinite(dto.created_at) && Number.isFinite(dto.completed_at)
-        ? dto.completed_at - dto.created_at
-        : null;
+    const durationSeconds = Agent.extractDurationSeconds(dto, this.apiMode);
     const modelName = dto.model || this.model;
     const costRub = usage
       ? OpenAIModelPricing.costRub(
@@ -1100,7 +1141,9 @@ export class Agent {
   // =====================
 
   async send(userText) {
-    if (!this.apiKey) throw new Error("API key пустой.");
+    if (requiresAuthorization(this.apiMode) && !this.apiKey) {
+      throw new Error("API key пустой.");
+    }
     if (!userText.trim()) throw new Error("Пустое сообщение.");
 
     await this._updateMemoryWithLLM(userText);
@@ -1144,7 +1187,17 @@ export class Agent {
     });
   }
 
-  static extractAnswerText(dto) {
+  static extractAnswerText(dto, apiMode = API_MODES.PROXYAPI_RESPONSES) {
+    if (isOllamaFamilyMode(apiMode)) {
+      const text =
+        dto &&
+        dto.message &&
+        typeof dto.message.content === "string"
+          ? dto.message.content
+          : null;
+      return (text || "").trim() || null;
+    }
+
     const output = Array.isArray(dto.output) ? dto.output : [];
     const assistantItem = output.find(
       (it) => it && it.type === "message" && it.role === "assistant",
@@ -1174,12 +1227,26 @@ export class Agent {
     return names;
   }
 
-  static extractUserVisibleAnswer(dto) {
+  static extractUserVisibleAnswer(dto, apiMode = API_MODES.PROXYAPI_RESPONSES) {
+    if (isOllamaFamilyMode(apiMode)) {
+      return Agent.extractAnswerText(dto, apiMode);
+    }
     const mcpCallNames = Agent.extractMcpCallNames(dto);
-    const answerText = Agent.extractAnswerText(dto);
+    const answerText = Agent.extractAnswerText(dto, apiMode);
     const parts = [];
     if (mcpCallNames.length > 0) parts.push(mcpCallNames.join("\n"));
     if (answerText) parts.push(answerText);
     return parts.join("\n\n").trim() || null;
+  }
+
+  static extractDurationSeconds(dto, apiMode = API_MODES.PROXYAPI_RESPONSES) {
+    if (isOllamaFamilyMode(apiMode)) {
+      return Number.isFinite(dto.total_duration)
+        ? dto.total_duration / 1_000_000_000
+        : null;
+    }
+    return Number.isFinite(dto.created_at) && Number.isFinite(dto.completed_at)
+      ? dto.completed_at - dto.created_at
+      : null;
   }
 }

@@ -1,6 +1,11 @@
 // /src/helpers.js
 export function normalizeUsage(dto) {
-  const u = dto && dto.usage ? dto.usage : null;
+  const source =
+    dto && typeof dto === "object"
+      ? dto.usage && typeof dto.usage === "object"
+        ? dto.usage
+        : dto
+      : null;
   const toFiniteNumber = (value) => {
     if (Number.isFinite(value)) return value;
     if (typeof value === "string" && value.trim() !== "") {
@@ -18,23 +23,25 @@ export function normalizeUsage(dto) {
     return null;
   };
 
-  const input = u
+  const input = source
     ? pick(
-        u.input_tokens,
-        u.inputTokens,
-        u.prompt_tokens,
-        u.promptTokens,
+        source.input_tokens,
+        source.inputTokens,
+        source.prompt_tokens,
+        source.promptTokens,
+        source.prompt_eval_count,
       )
     : null;
-  const output = u
+  const output = source
     ? pick(
-        u.output_tokens,
-        u.outputTokens,
-        u.completion_tokens,
-        u.completionTokens,
+        source.output_tokens,
+        source.outputTokens,
+        source.completion_tokens,
+        source.completionTokens,
+        source.eval_count,
       )
     : null;
-  const total = u ? pick(u.total_tokens, u.totalTokens) : null;
+  const total = source ? pick(source.total_tokens, source.totalTokens) : null;
 
   if (input == null || output == null) return null;
   return {

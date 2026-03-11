@@ -34,6 +34,14 @@ async function main() {
     { inputTokens: 700, outputTokens: 50, totalTokens: 750 },
   );
 
+  assert.deepEqual(
+    normalizeUsage({
+      prompt_eval_count: 42,
+      eval_count: 9,
+    }),
+    { inputTokens: 42, outputTokens: 9, totalTokens: 51 },
+  );
+
   assert.equal(normalizeUsage({ usage: { input_tokens: "abc" } }), null);
   assert.equal(normalizeUsage({}), null);
 }

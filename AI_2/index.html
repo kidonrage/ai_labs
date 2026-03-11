@@ -29,8 +29,17 @@
         <div class="controls">
           <div class="controls-fields">
           <label class="field">
-            <span>Base URL</span>
-            <input id="baseUrl" type="text" value="https://api.proxyapi.ru" />
+            <span>API</span>
+            <select id="apiMode">
+              <option value="proxyapi_responses">ProxyAPI Responses</option>
+              <option value="ollama_chat">Ollama Chat</option>
+              <option value="ollama_mcp_chat">Ollama + MCP</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>API URL</span>
+            <input id="baseUrl" type="text" value="https://api.proxyapi.ru/openai/v1/responses" />
           </label>
 
           <label class="field">
@@ -40,6 +49,7 @@
               <option value="gpt-5.2">gpt-5.2</option>
               <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
               <option value="gemma3">gemma3</option>
+              <option value="qwen3:4b">qwen3:4b</option>
             </select>
           </label>
 

@@ -1,4 +1,10 @@
 import { Agent } from "./agent.js";
+import {
+  defaultModelForApiMode,
+  defaultEndpointForApiMode,
+  endpointForApiMode,
+  inferApiMode,
+} from "./api-profiles.js";
 import { loadState, saveState } from "./storage.js";
 import { computeHistoryTotals, mergeTotals, formatTime } from "./helpers.js";
 import {
@@ -296,6 +302,7 @@ function normalizeStore(raw, fallbackConfig) {
   }
 
   const initialAgent = new Agent({
+    apiMode: fallbackConfig.apiMode,
     baseUrl: fallbackConfig.baseUrl,
     apiKey: "",
     model: fallbackConfig.model,
@@ -338,8 +345,15 @@ function nextChatTitle(chats) {
 const persisted = loadState();
 
 const fallbackConfig = {
-  baseUrl: $("baseUrl").value,
-  model: $("model").value,
+  apiMode: inferApiMode($("apiMode").value, $("baseUrl").value),
+  baseUrl: endpointForApiMode(
+    $("apiMode").value,
+    $("baseUrl").value,
+  ),
+  model: defaultModelForApiMode(
+    inferApiMode($("apiMode").value, $("baseUrl").value),
+    $("model").value,
+  ),
   temperature: Number($("temperature").value),
 };
 
@@ -546,11 +560,13 @@ function bindAgentToActiveChat() {
       ? activeBranch.state
       : chat.state || {};
   const chatConfig = (branchState && branchState.config) || {};
+  const apiMode = inferApiMode(chatConfig.apiMode, chatConfig.baseUrl);
 
   agent = new Agent({
+    apiMode,
     baseUrl:
       typeof chatConfig.baseUrl === "string"
-        ? chatConfig.baseUrl
+        ? endpointForApiMode(apiMode, chatConfig.baseUrl)
         : fallbackConfig.baseUrl,
     apiKey: currentApiKey,
     model:
@@ -630,11 +646,16 @@ function bindAgentToActiveChat() {
   renderInvariantControls();
 
   if (branchState && branchState.config) {
+    $("apiMode").value = apiMode;
     if (typeof branchState.config.baseUrl === "string") {
-      $("baseUrl").value = branchState.config.baseUrl;
+      $("baseUrl").value = endpointForApiMode(apiMode, branchState.config.baseUrl);
+    } else {
+      $("baseUrl").value = defaultEndpointForApiMode(apiMode);
     }
     if (typeof branchState.config.model === "string") {
       $("model").value = branchState.config.model;
+    } else {
+      $("model").value = defaultModelForApiMode(apiMode);
     }
     if (typeof branchState.config.temperature === "number") {
       $("temperature").value = String(branchState.config.temperature);
@@ -774,7 +795,8 @@ function createChat() {
   const chatId = makeChatId();
 
   const newAgent = new Agent({
-    baseUrl: $("baseUrl").value.trim(),
+    apiMode: inferApiMode($("apiMode").value, $("baseUrl").value),
+    baseUrl: endpointForApiMode($("apiMode").value, $("baseUrl").value),
     apiKey: currentApiKey,
     model: $("model").value,
     temperature: Number($("temperature").value),
@@ -870,7 +892,8 @@ function deleteActiveChat() {
 function syncAgentConfig() {
   if (!agent) return;
   agent.setConfig({
-    baseUrl: $("baseUrl").value.trim(),
+    apiMode: inferApiMode($("apiMode").value, $("baseUrl").value),
+    baseUrl: endpointForApiMode($("apiMode").value, $("baseUrl").value),
     apiKey: getEffectiveApiKey(),
     model: $("model").value,
     temperature: Number($("temperature").value),
@@ -1203,6 +1226,13 @@ $("addInvariant").addEventListener("click", () => {
 
 $("removeInvariant").addEventListener("click", () => {
   removeSelectedInvariant();
+});
+
+$("apiMode").addEventListener("change", () => {
+  const apiMode = inferApiMode($("apiMode").value, $("baseUrl").value);
+  $("baseUrl").value = defaultEndpointForApiMode(apiMode);
+  $("model").value = defaultModelForApiMode(apiMode);
+  syncAgentConfig();
 });
 
 ["baseUrl", "model", "temperature"].forEach((id) => {
