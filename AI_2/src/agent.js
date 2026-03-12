@@ -980,6 +980,22 @@ export class Agent {
     const keepLast = this._slidingWindowSize();
     const tail = this.history.slice(-keepLast);
 
+    if (this.apiMode === API_MODES.OLLAMA_TOOLS_CHAT) {
+      const userMessages = tail
+        .filter((m) => m && m.role === "user" && typeof m.text === "string")
+        .map((m) => m.text);
+      userMessages.push(String(nextUserText || ""));
+
+      return [
+        "LONG-TERM MEMORY:",
+        JSON.stringify(this.longTermMemory, null, 2),
+        "WORKING MEMORY:",
+        JSON.stringify(this.workingMemory, null, 2),
+        "USER MESSAGES:",
+        JSON.stringify(userMessages, null, 2),
+      ].join("\n");
+    }
+
     const parts = [];
     parts.push(`SYSTEM: ${this.systemPreamble}`);
     parts.push(`PLANNER PROMPT: ${this.plannerPrompt}`);

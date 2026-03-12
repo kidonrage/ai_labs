@@ -46,6 +46,21 @@ async function main() {
   assert.equal(request.messages[0].content, "ping");
   assert.equal(request.options.temperature, 0.3);
   assert.equal("tools" in request, false);
+
+  mcpAgent.history.push(
+    { role: "user", text: "первый вопрос", at: new Date().toISOString() },
+    { role: "assistant", text: "ответ", at: new Date().toISOString() },
+  );
+  const compactInput = await mcpAgent._buildContextInput("второй вопрос");
+  assert.match(compactInput, /LONG-TERM MEMORY:/);
+  assert.match(compactInput, /WORKING MEMORY:/);
+  assert.match(compactInput, /USER MESSAGES:/);
+  assert.match(compactInput, /первый вопрос/);
+  assert.match(compactInput, /второй вопрос/);
+  assert.doesNotMatch(compactInput, /SYSTEM:/);
+  assert.doesNotMatch(compactInput, /INVARIANTS:/);
+  assert.doesNotMatch(compactInput, /ответ/);
+
   assert.equal(
     Agent.extractUserVisibleAnswer(
       {
