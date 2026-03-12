@@ -16,39 +16,6 @@ import {
 import { formatInvariantRefusal as buildInvariantRefusalText } from "./refusal-formatter.js";
 import { TaskStageWorkflow } from "./task-stage-workflow.js";
 
-const RESPONSE_TOOLS = Object.freeze([
-  Object.freeze({
-    type: "mcp",
-    allowed_tools: Object.freeze([
-      "get_weather_forecast",
-      "geocode_location",
-      "get_historical_weather",
-      "get_air_quality",
-      "get_marine_forecast",
-      "interpret_weather_code",
-    ]),
-    headers: null,
-    require_approval: "never",
-    server_description:
-      "Public read-only weather service powered by Open-Meteo for forecast, air quality, marine, and geocoding data.",
-    server_label: "weather",
-    server_url: "https://weather.chukai.io/mcp",
-  }),
-  Object.freeze({
-    type: "mcp",
-    allowed_tools: Object.freeze([
-      "schedule_task",
-      "get_task_runs_report",
-    ]),
-    headers: null,
-    require_approval: "never",
-    server_description:
-      "Local JSON-backed task runtime with an embedded scheduler. Use it to add tasks and inspect completed runs.",
-    server_label: "task_runtime",
-    server_url: "http://127.0.0.1:8765/mcp",
-  }),
-]);
-
 function normalizeUserProfile(profile) {
   const raw =
     profile && typeof profile === "object" && !Array.isArray(profile)
@@ -871,7 +838,6 @@ export class Agent {
       model,
       input,
       temperature: Number(temperature),
-      tools: RESPONSE_TOOLS,
     };
   }
 
@@ -912,7 +878,7 @@ export class Agent {
   }
 
   async _updateMemoryWithLLM(nextUserText) {
-    if (this.apiMode === API_MODES.OLLAMA_MCP_CHAT) {
+    if (this.apiMode === API_MODES.OLLAMA_TOOLS_CHAT) {
       return;
     }
     if (requiresAuthorization(this.apiMode) && !this.apiKey)
@@ -1203,9 +1169,7 @@ export class Agent {
   static extractAnswerText(dto, apiMode = API_MODES.PROXYAPI_RESPONSES) {
     if (isOllamaFamilyMode(apiMode)) {
       const text =
-        dto &&
-        dto.message &&
-        typeof dto.message.content === "string"
+        dto && dto.message && typeof dto.message.content === "string"
           ? dto.message.content
           : null;
       return (text || "").trim() || null;
@@ -1226,7 +1190,7 @@ export class Agent {
     return (t || "").trim() || null;
   }
 
-  static extractMcpCallNames(dto) {
+  static extractToolCallNames(dto) {
     const output = Array.isArray(dto.output) ? dto.output : [];
     const names = [];
     for (const item of output) {
@@ -1244,10 +1208,10 @@ export class Agent {
     if (isOllamaFamilyMode(apiMode)) {
       return Agent.extractAnswerText(dto, apiMode);
     }
-    const mcpCallNames = Agent.extractMcpCallNames(dto);
+    const toolCallNames = Agent.extractToolCallNames(dto);
     const answerText = Agent.extractAnswerText(dto, apiMode);
     const parts = [];
-    if (mcpCallNames.length > 0) parts.push(mcpCallNames.join("\n"));
+    if (toolCallNames.length > 0) parts.push(toolCallNames.join("\n"));
     if (answerText) parts.push(answerText);
     return parts.join("\n\n").trim() || null;
   }

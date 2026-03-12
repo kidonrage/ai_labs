@@ -30,7 +30,7 @@ async function main() {
   );
 
   const mcpAgent = new Agent({
-    apiMode: "ollama_mcp_chat",
+    apiMode: "ollama_tools_chat",
     baseUrl: "http://localhost:8000/api/chat",
     apiKey: "",
     model: "qwen3:4b",
@@ -54,7 +54,7 @@ async function main() {
           content: "  mcp local answer  ",
         },
       },
-      "ollama_mcp_chat",
+      "ollama_tools_chat",
     ),
     "mcp local answer",
   );
