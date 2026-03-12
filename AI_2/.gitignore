@@ -1,1 +1,5 @@
 private.config.js
+task_runtime/service.log
+task_runtime/runtime/
+task_runtime/__pycache__/
+task_runtime/storage/store.lock

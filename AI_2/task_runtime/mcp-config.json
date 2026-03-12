@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "task_runtime": {
+      "command": "python3",
+      "args": ["./task_mcp_server.py", "--transport", "stdio"]
+    }
+  }
+}

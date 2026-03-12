@@ -34,6 +34,26 @@ const RESPONSE_TOOLS = Object.freeze([
     server_label: "weather",
     server_url: "https://weather.chukai.io/mcp",
   }),
+  Object.freeze({
+    type: "mcp",
+    allowed_tools: Object.freeze([
+      "schedule_task",
+      "update_task",
+      "list_tasks",
+      "get_task",
+      "delete_task",
+      "run_task_now",
+      "list_task_runs",
+      "get_task_summary",
+      "get_tasks_overview",
+    ]),
+    headers: null,
+    require_approval: "never",
+    server_description:
+      "Local JSON-backed task runtime for delayed and periodic MCP jobs. Use it for scheduling, history, and aggregated summaries.",
+    server_label: "task_runtime",
+    server_url: "http://127.0.0.1:8765/mcp",
+  }),
 ]);
 
 function normalizeUserProfile(profile) {
