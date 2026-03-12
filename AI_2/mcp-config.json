@@ -9,9 +9,9 @@
     },
     "task_runtime": {
       "command": "python3",
-      "args": ["./task_runtime/task_mcp_server.py", "--transport", "stdio"],
+      "args": ["./periodic_summary_mcp/main.py"],
       "toolFilter": {
-        "tools": ["schedule_task", "get_task_runs_report"]
+        "tools": ["enable_periodic_summary", "get_periodic_summary"]
       }
     }
   }
