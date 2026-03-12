@@ -3,3 +3,4 @@ task_runtime/service.log
 task_runtime/runtime/
 task_runtime/__pycache__/
 task_runtime/storage/store.lock
+local_runtime/__pycache__/
