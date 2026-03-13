@@ -13,6 +13,13 @@
       "toolFilter": {
         "tools": ["enable_periodic_summary", "get_periodic_summary"]
       }
+    },
+    "pipeline": {
+      "command": "python3",
+      "args": ["./simple_pipeline_mcp/main.py"],
+      "toolFilter": {
+        "tools": ["search", "summarize", "save_to_file", "run_pipeline"]
+      }
     }
   }
 }
