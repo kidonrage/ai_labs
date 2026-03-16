@@ -69,7 +69,7 @@ export function defaultModelForApiMode(value, currentModel = "") {
   const mode = normalizeApiMode(value);
   const model = String(currentModel || "").trim();
   if (model) return model;
-  if (mode === API_MODES.OLLAMA_TOOLS_CHAT) return "qwen3:4b";
+  if (mode === API_MODES.OLLAMA_TOOLS_CHAT) return "qwen3:8b";
   if (mode === API_MODES.OLLAMA_CHAT) return "gemma3";
   return "gpt-4.1";
 }

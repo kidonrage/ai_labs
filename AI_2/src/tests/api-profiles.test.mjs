@@ -21,7 +21,7 @@ async function main() {
     inferApiMode("", "http://localhost:8000/api/chat"),
     API_MODES.OLLAMA_TOOLS_CHAT,
   );
-  assert.equal(defaultModelForApiMode(API_MODES.OLLAMA_TOOLS_CHAT), "qwen3:4b");
+  assert.equal(defaultModelForApiMode(API_MODES.OLLAMA_TOOLS_CHAT), "qwen3:8b");
   assert.equal(isOllamaFamilyMode(API_MODES.OLLAMA_TOOLS_CHAT), true);
 }
 

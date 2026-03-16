@@ -33,18 +33,19 @@ async function main() {
     apiMode: "ollama_tools_chat",
     baseUrl: "http://localhost:8000/api/chat",
     apiKey: "",
-    model: "qwen3:4b",
+    model: "qwen3:8b",
     temperature: 0.3,
   });
 
   const request = mcpAgent._buildResponseRequestBody({
-    model: "qwen3:4b",
+    model: "qwen3:8b",
     input: "ping",
     temperature: 0.3,
   });
-  assert.equal(request.model, "qwen3:4b");
+  assert.equal(request.model, "qwen3:8b");
   assert.equal(request.messages[0].content, "ping");
   assert.equal(request.options.temperature, 0.3);
+  assert.equal(request.think, false);
   assert.equal("tools" in request, false);
 
   mcpAgent.history.push(
@@ -65,7 +66,7 @@ async function main() {
     apiMode: "ollama_tools_chat",
     baseUrl: "http://localhost:8000/api/chat",
     apiKey: "",
-    model: "qwen3:4b",
+    model: "qwen3:8b",
     temperature: 0.3,
   });
   firstTurnAgent.history.push({
