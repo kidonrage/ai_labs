@@ -6,7 +6,12 @@ import {
   inferApiMode,
 } from "./api-profiles.js";
 import { loadState, saveState } from "./storage.js";
-import { computeHistoryTotals, mergeTotals, formatTime } from "./helpers.js";
+import {
+  computeHistoryTotals,
+  mergeTotals,
+  formatTime,
+  shouldRestoreOptimisticUserMessage,
+} from "./helpers.js";
 import {
   addMessage,
   renderHistory,
@@ -1071,6 +1076,9 @@ async function handleSend() {
   if (!text.trim() || !agent || isSending) return;
 
   syncAgentConfig();
+  const historyBaselineLength = Array.isArray(agent.history)
+    ? agent.history.length
+    : 0;
 
   const optimisticUser = {
     role: "user",
@@ -1122,7 +1130,13 @@ async function handleSend() {
   } catch (err) {
     typing.remove();
 
-    if (poppedForRegularSend) {
+    if (
+      poppedForRegularSend &&
+      shouldRestoreOptimisticUserMessage(
+        Array.isArray(agent.history) ? agent.history.length : 0,
+        historyBaselineLength,
+      )
+    ) {
       agent.history.push(optimisticUser);
     }
     agent.history.push({

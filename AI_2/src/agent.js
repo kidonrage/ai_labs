@@ -984,13 +984,17 @@ export class Agent {
       const userMessages = tail
         .filter((m) => m && m.role === "user" && typeof m.text === "string")
         .map((m) => m.text);
-      userMessages.push(String(nextUserText || ""));
+      const nextText = String(nextUserText || "");
+      const lastTailMessage = tail.length > 0 ? tail[tail.length - 1] : null;
+      const currentUserAlreadyInTail =
+        lastTailMessage &&
+        lastTailMessage.role === "user" &&
+        String(lastTailMessage.text || "") === nextText;
+      if (!currentUserAlreadyInTail) {
+        userMessages.push(nextText);
+      }
 
       return [
-        "LONG-TERM MEMORY:",
-        JSON.stringify(this.longTermMemory, null, 2),
-        "WORKING MEMORY:",
-        JSON.stringify(this.workingMemory, null, 2),
         "USER MESSAGES:",
         JSON.stringify(userMessages, null, 2),
       ].join("\n");

@@ -119,3 +119,16 @@ export function formatTimeFromISO(iso) {
     return formatTime();
   }
 }
+
+export function shouldRestoreOptimisticUserMessage(
+  historyLength,
+  baselineLength,
+) {
+  const current =
+    Number.isInteger(historyLength) && historyLength >= 0 ? historyLength : 0;
+  const baseline =
+    Number.isInteger(baselineLength) && baselineLength >= 0
+      ? baselineLength
+      : 0;
+  return current <= baseline;
+}
