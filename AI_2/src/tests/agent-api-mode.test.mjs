@@ -52,14 +52,32 @@ async function main() {
     { role: "assistant", text: "ответ", at: new Date().toISOString() },
   );
   const compactInput = await mcpAgent._buildContextInput("второй вопрос");
-  assert.match(compactInput, /LONG-TERM MEMORY:/);
-  assert.match(compactInput, /WORKING MEMORY:/);
   assert.match(compactInput, /USER MESSAGES:/);
   assert.match(compactInput, /первый вопрос/);
   assert.match(compactInput, /второй вопрос/);
+  assert.doesNotMatch(compactInput, /LONG-TERM MEMORY:/);
+  assert.doesNotMatch(compactInput, /WORKING MEMORY:/);
   assert.doesNotMatch(compactInput, /SYSTEM:/);
   assert.doesNotMatch(compactInput, /INVARIANTS:/);
   assert.doesNotMatch(compactInput, /ответ/);
+
+  const firstTurnAgent = new Agent({
+    apiMode: "ollama_tools_chat",
+    baseUrl: "http://localhost:8000/api/chat",
+    apiKey: "",
+    model: "qwen3:4b",
+    temperature: 0.3,
+  });
+  firstTurnAgent.history.push({
+    role: "user",
+    text: "собери summary",
+    at: new Date().toISOString(),
+  });
+  const firstTurnInput = await firstTurnAgent._buildContextInput("собери summary");
+  const parsedFirstTurn = JSON.parse(
+    firstTurnInput.replace(/^USER MESSAGES:\s*/, ""),
+  );
+  assert.deepEqual(parsedFirstTurn, ["собери summary"]);
 
   assert.equal(
     Agent.extractUserVisibleAnswer(
