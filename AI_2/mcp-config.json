@@ -1,24 +1,24 @@
 {
   "mcpServers": {
-    "weather": {
+    "save_to_file": {
       "command": "python3",
-      "args": ["./weather_mcp/mock-weather-mcp-server/main.py"],
+      "args": ["./save_server.py"],
       "toolFilter": {
-        "tools": ["get_current_temperature"]
+        "tools": ["save_to_file"]
       }
     },
-    "task_runtime": {
+    "search": {
       "command": "python3",
-      "args": ["./periodic_summary_mcp/main.py"],
+      "args": ["./search_server.py"],
       "toolFilter": {
-        "tools": ["enable_periodic_summary", "get_periodic_summary"]
+        "tools": ["search"]
       }
     },
-    "pipeline": {
+    "summarize": {
       "command": "python3",
-      "args": ["./simple_pipeline_mcp/main.py"],
+      "args": ["./summarize_server.py"],
       "toolFilter": {
-        "tools": ["search", "summarize", "save_to_file", "run_pipeline"]
+        "tools": ["summarize"]
       }
     }
   }
