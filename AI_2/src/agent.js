@@ -819,7 +819,7 @@ export class Agent {
 
   _buildResponseRequestBody({ model, input, temperature }) {
     if (isOllamaFamilyMode(this.apiMode)) {
-      return {
+      const body = {
         model,
         messages: [
           {
@@ -832,6 +832,10 @@ export class Agent {
           temperature: Number(temperature),
         },
       };
+      if (this.apiMode === API_MODES.OLLAMA_TOOLS_CHAT) {
+        body.think = false;
+      }
+      return body;
     }
 
     return {
