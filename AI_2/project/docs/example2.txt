@@ -1,0 +1,4 @@
+This is a plain text file.
+
+It shows that .txt files are read as simple UTF-8 text.
+For structured chunking, the whole file becomes one chunk.

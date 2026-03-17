@@ -1,0 +1,5 @@
+{
+  "project": "simple-indexer",
+  "model": "embeddinggemma",
+  "purpose": "demo document for JSON parsing as plain text"
+}
