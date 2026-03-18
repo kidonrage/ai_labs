@@ -894,16 +894,19 @@ export class Agent {
     return headers;
   }
 
-  _buildResponseRequestBody({ model, input, temperature }) {
+  _buildResponseRequestBody({ model, input, temperature, messages = null }) {
     if (isOllamaFamilyMode(this.apiMode)) {
       const body = {
         model,
-        messages: [
-          {
-            role: "user",
-            content: String(input || ""),
-          },
-        ],
+        messages:
+          Array.isArray(messages) && messages.length > 0
+            ? messages
+            : [
+                {
+                  role: "user",
+                  content: String(input || ""),
+                },
+              ],
         stream: false,
         options: {
           temperature: Number(temperature),
@@ -1061,26 +1064,6 @@ export class Agent {
     const keepLast = this._slidingWindowSize();
     const tail = this.history.slice(-keepLast);
 
-    if (this.apiMode === API_MODES.OLLAMA_TOOLS_CHAT) {
-      const userMessages = tail
-        .filter((m) => m && m.role === "user" && typeof m.text === "string")
-        .map((m) => m.text);
-      const nextText = String(nextUserText || "");
-      const lastTailMessage = tail.length > 0 ? tail[tail.length - 1] : null;
-      const currentUserAlreadyInTail =
-        lastTailMessage &&
-        lastTailMessage.role === "user" &&
-        String(lastTailMessage.text || "") === nextText;
-      if (!currentUserAlreadyInTail) {
-        userMessages.push(nextText);
-      }
-
-      return [
-        "USER MESSAGES:",
-        JSON.stringify(userMessages, null, 2),
-      ].join("\n");
-    }
-
     const parts = [];
     parts.push(`SYSTEM: ${this.systemPreamble}`);
     parts.push(`PLANNER PROMPT: ${this.plannerPrompt}`);
@@ -1150,6 +1133,61 @@ export class Agent {
     return parts.join("\n");
   }
 
+  /**
+   * Builds explicit chat messages for Ollama so the request body visibly includes RAG context.
+   */
+  _buildOllamaChatMessages(nextUserText, runtimeContext = null) {
+    const systemParts = [
+      this.systemPreamble,
+      this.finalResponderPrompt,
+      buildProfilePriorityInstructions(this.userProfile),
+    ];
+
+    const userParts = [
+      `Вопрос пользователя:\n${String(nextUserText || "").trim()}`,
+    ];
+
+    if (
+      runtimeContext &&
+      typeof runtimeContext === "object" &&
+      !Array.isArray(runtimeContext)
+    ) {
+      if (
+        runtimeContext.rag &&
+        typeof runtimeContext.rag === "object" &&
+        typeof runtimeContext.rag.contextText === "string" &&
+        runtimeContext.rag.contextText.trim()
+      ) {
+        systemParts.push(
+          "Если передан RETRIEVED CONTEXT, отвечай только на его основе. Не выдумывай факты. Если ответа нет в контексте, так и скажи.",
+        );
+        userParts.push("RETRIEVED CONTEXT:");
+        userParts.push(runtimeContext.rag.contextText.trim());
+      }
+
+      if (runtimeContext.invariantCheck) {
+        userParts.push("INVARIANT CHECK RESULT:");
+        userParts.push(JSON.stringify(runtimeContext.invariantCheck, null, 2));
+      }
+
+      if (runtimeContext.draftPlan) {
+        userParts.push("DRAFT PLAN:");
+        userParts.push(JSON.stringify(runtimeContext.draftPlan, null, 2));
+      }
+    }
+
+    return [
+      {
+        role: "system",
+        content: systemParts.join("\n\n"),
+      },
+      {
+        role: "user",
+        content: userParts.join("\n\n"),
+      },
+    ];
+  }
+
   async generateFinalResponse({
     userText,
     userMsg,
@@ -1162,10 +1200,18 @@ export class Agent {
       invariantCheck,
       rag,
     });
+    const runtimeContext = {
+      draftPlan,
+      invariantCheck,
+      rag,
+    };
     const url = this._endpointUrl();
     const body = this._buildResponseRequestBody({
       model: this.model,
       input,
+      messages: isOllamaFamilyMode(this.apiMode)
+        ? this._buildOllamaChatMessages(userText, runtimeContext)
+        : null,
       temperature: this.temperature,
     });
 
