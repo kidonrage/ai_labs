@@ -248,11 +248,22 @@ body {
   gap: 10px;
 }
 
-.rag-panel-head {
+.rag-panel > summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.rag-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.rag-panel[open] > summary {
+  margin-bottom: 8px;
 }
 
 .rag-summary {

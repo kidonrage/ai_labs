@@ -282,12 +282,14 @@ export function renderRagPanel(ragResult) {
 
   if (!result.enabled) {
     panel.hidden = true;
+    panel.open = false;
     summary.textContent = "RAG выключен";
     chunksWrap.innerHTML = "";
     return;
   }
 
   panel.hidden = false;
+  panel.open = false;
 
   if (typeof result.error === "string" && result.error.trim()) {
     summary.textContent = `Ошибка RAG: ${result.error}`;

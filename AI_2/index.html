@@ -146,13 +146,13 @@
             <span class="task-start-hint">Start Task: <code>start: ...</code></span>
           </div>
         </section>
-        <section id="ragPanel" class="rag-panel" hidden>
-          <div class="rag-panel-head">
-            <div class="task-status-title">RAG Retrieval</div>
-            <div id="ragSummary" class="rag-summary">RAG выключен</div>
-          </div>
+        <details id="ragPanel" class="rag-panel" hidden>
+          <summary>
+            <span class="task-status-title">RAG Retrieval</span>
+            <span id="ragSummary" class="rag-summary">RAG выключен</span>
+          </summary>
           <div id="ragChunks" class="rag-chunks"></div>
-        </section>
+        </details>
         <div id="messages" class="messages" aria-live="polite"></div>
       </main>
 
