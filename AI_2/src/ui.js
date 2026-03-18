@@ -257,6 +257,69 @@ export function renderTaskStatus(taskState, options = {}) {
   continueBtn.disabled = isBusy || !canContinue;
 }
 
+/**
+ * Makes a short one-line chunk preview for the retrieval panel.
+ */
+function makeRagSnippet(text, maxLength = 220) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength)}...`;
+}
+
+/**
+ * Renders the latest retrieved chunks for the current chat.
+ */
+export function renderRagPanel(ragResult) {
+  const panel = $("ragPanel");
+  const summary = $("ragSummary");
+  const chunksWrap = $("ragChunks");
+  if (!panel || !summary || !chunksWrap) return;
+
+  const result =
+    ragResult && typeof ragResult === "object" && !Array.isArray(ragResult)
+      ? ragResult
+      : { enabled: false, chunks: [], error: null };
+
+  if (!result.enabled) {
+    panel.hidden = true;
+    summary.textContent = "RAG выключен";
+    chunksWrap.innerHTML = "";
+    return;
+  }
+
+  panel.hidden = false;
+
+  if (typeof result.error === "string" && result.error.trim()) {
+    summary.textContent = `Ошибка RAG: ${result.error}`;
+    chunksWrap.innerHTML = "";
+    return;
+  }
+
+  const chunks = Array.isArray(result.chunks) ? result.chunks : [];
+  summary.textContent = `Найдено чанков: ${chunks.length}`;
+
+  if (chunks.length === 0) {
+    chunksWrap.innerHTML = '<div class="rag-empty">Подходящие чанки не найдены.</div>';
+    return;
+  }
+
+  chunksWrap.innerHTML = chunks
+    .map(
+      (chunk, index) => `
+        <article class="rag-chunk">
+          <div class="rag-chunk-row"><strong>Rank:</strong> ${index + 1}</div>
+          <div class="rag-chunk-row"><strong>Similarity:</strong> ${
+            Number.isFinite(chunk.similarity) ? chunk.similarity.toFixed(4) : "n/a"
+          }</div>
+          <div class="rag-chunk-row"><strong>Source:</strong> ${chunk.source || "unknown"}</div>
+          <div class="rag-chunk-row"><strong>Section:</strong> ${chunk.section || "unknown"}</div>
+          <div class="rag-chunk-text">${makeRagSnippet(chunk.text)}</div>
+        </article>
+      `,
+    )
+    .join("");
+}
+
 export function setBusy(isBusy) {
   const ids = [
     "send",
@@ -271,6 +334,7 @@ export function setBusy(isBusy) {
     "model",
     "temperature",
     "baseUrl",
+    "ragMode",
     "pauseTask",
     "continueTask",
     "invariantSelect",

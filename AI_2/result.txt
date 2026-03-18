@@ -1,0 +1,1 @@
+Large Language Models (LLMs) are advanced artificial intelligence systems capable of understanding and generating human-like text. They are trained on vast amounts of data and can perform tasks such as answering questions, writing stories, and creating code. LLMs are widely used in various applications, including chatbots, language translation, and content creation.

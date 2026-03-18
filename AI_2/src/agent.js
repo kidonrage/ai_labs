@@ -1,6 +1,7 @@
 import { OpenAIModelPricing } from "./pricing.js";
 import { normalizeUsage } from "./helpers.js";
 import { normalizeInvariants } from "./invariants.store.js";
+import { retrieveChunks } from "./rag.js";
 import {
   API_MODES,
   endpointForApiMode,
@@ -248,6 +249,19 @@ export class Agent {
     this.invariants = Agent.makeDefaultInvariants();
     this.lastInvariantCheck = null;
     this.userProfile = normalizeUserProfile(null);
+    this.ragConfig = {
+      enabled: false,
+      indexUrl: "./static/index_structured.json",
+      embeddingApiUrl: "http://localhost:11434/api/embed",
+      embeddingModel: "embeddinggemma",
+      topK: 3,
+    };
+    this.lastRagResult = {
+      enabled: false,
+      chunks: [],
+      question: "",
+      error: null,
+    };
 
     // Separate accounting for summarization
     this.summaryTotals = {
@@ -325,6 +339,19 @@ export class Agent {
     this._emitStateChanged();
   }
 
+  setRagConfig(patch) {
+    const next = patch && typeof patch === "object" ? patch : {};
+    this.ragConfig = {
+      ...this.ragConfig,
+      ...next,
+      enabled: Boolean(next.enabled ?? this.ragConfig.enabled),
+      topK: Number.isInteger(next.topK) && next.topK > 0
+        ? next.topK
+        : this.ragConfig.topK,
+    };
+    this._emitStateChanged();
+  }
+
   exportLongTermMemory() {
     return Agent.normalizeLongTermMemory(this.longTermMemory);
   }
@@ -370,6 +397,8 @@ export class Agent {
       systemPreamble: this.systemPreamble,
       contextPolicy: this.contextPolicy,
       userProfile: this.userProfile,
+      ragConfig: this.ragConfig,
+      lastRagResult: this.lastRagResult,
       workingMemory: this.workingMemory,
       taskState: this.taskState,
       invariants: this.invariants,
@@ -388,6 +417,54 @@ export class Agent {
     }
     if (state.userProfile && typeof state.userProfile === "object") {
       this.userProfile = normalizeUserProfile(state.userProfile);
+    }
+    if (
+      state.ragConfig &&
+      typeof state.ragConfig === "object" &&
+      !Array.isArray(state.ragConfig)
+    ) {
+      this.ragConfig = {
+        ...this.ragConfig,
+        ...state.ragConfig,
+        enabled: Boolean(state.ragConfig.enabled),
+        topK:
+          Number.isInteger(state.ragConfig.topK) && state.ragConfig.topK > 0
+            ? state.ragConfig.topK
+            : this.ragConfig.topK,
+      };
+    }
+    if (
+      state.lastRagResult &&
+      typeof state.lastRagResult === "object" &&
+      !Array.isArray(state.lastRagResult)
+    ) {
+      this.lastRagResult = {
+        enabled: Boolean(state.lastRagResult.enabled),
+        question:
+          typeof state.lastRagResult.question === "string"
+            ? state.lastRagResult.question
+            : "",
+        error:
+          typeof state.lastRagResult.error === "string"
+            ? state.lastRagResult.error
+            : null,
+        chunks: Array.isArray(state.lastRagResult.chunks)
+          ? state.lastRagResult.chunks
+              .filter((chunk) => chunk && typeof chunk === "object")
+              .map((chunk) => ({
+                chunk_id:
+                  typeof chunk.chunk_id === "string" ? chunk.chunk_id : null,
+                source:
+                  typeof chunk.source === "string" ? chunk.source : "unknown",
+                section:
+                  typeof chunk.section === "string" ? chunk.section : "unknown",
+                text: typeof chunk.text === "string" ? chunk.text : "",
+                similarity: Number.isFinite(chunk.similarity)
+                  ? chunk.similarity
+                  : -1,
+              }))
+          : [],
+      };
     }
 
     if (state.config && typeof state.config === "object") {
@@ -1038,6 +1115,19 @@ export class Agent {
         parts.push("INVARIANT CHECK RESULT:");
         parts.push(JSON.stringify(invariantCheck, null, 2));
       }
+      if (
+        runtimeContext.rag &&
+        typeof runtimeContext.rag === "object" &&
+        typeof runtimeContext.rag.contextText === "string" &&
+        runtimeContext.rag.contextText.trim()
+      ) {
+        parts.push("RAG MODE:");
+        parts.push(
+          "Отвечай только на основе найденных чанков ниже. Не выдумывай факты. Если ответа нет в чанках, прямо скажи, что он не найден в предоставленных документах. По возможности укажи source и section.",
+        );
+        parts.push("RETRIEVED CONTEXT:");
+        parts.push(runtimeContext.rag.contextText.trim());
+      }
     }
     const shortTerm = {
       messages: tail.map((m) => ({
@@ -1065,10 +1155,12 @@ export class Agent {
     userMsg,
     draftPlan,
     invariantCheck,
+    rag = null,
   }) {
     const input = await this._buildContextInput(userText, {
       draftPlan,
       invariantCheck,
+      rag,
     });
     const url = this._endpointUrl();
     const body = this._buildResponseRequestBody({
@@ -1135,8 +1227,51 @@ export class Agent {
       durationSeconds,
       costRub,
       invariantCheck,
+      retrievedChunks: rag && Array.isArray(rag.chunks) ? rag.chunks : [],
       refused: false,
     };
+  }
+
+  /**
+   * Sends the current message directly to the model without document retrieval.
+   */
+  async answerWithoutRag({ userText, userMsg, draftPlan, invariantCheck }) {
+    this.lastRagResult = {
+      enabled: false,
+      chunks: [],
+      question: String(userText || ""),
+      error: null,
+    };
+    this._emitStateChanged();
+    return this.generateFinalResponse({
+      userText,
+      userMsg,
+      draftPlan,
+      invariantCheck,
+      rag: null,
+    });
+  }
+
+  /**
+   * Runs retrieval first, then sends the question together with found context.
+   */
+  async answerWithRag({ userText, userMsg, draftPlan, invariantCheck }) {
+    const rag = await retrieveChunks(userText, this.ragConfig);
+    this.lastRagResult = {
+      enabled: true,
+      chunks: rag.chunks,
+      question: String(userText || ""),
+      error: null,
+    };
+    this._emitStateChanged();
+
+    return this.generateFinalResponse({
+      userText,
+      userMsg,
+      draftPlan,
+      invariantCheck,
+      rag,
+    });
   }
 
   // =====================
@@ -1163,6 +1298,12 @@ export class Agent {
     this._emitStateChanged();
 
     if (decision.invariantCheck.conflict) {
+      this.lastRagResult = {
+        enabled: Boolean(this.ragConfig.enabled),
+        chunks: [],
+        question: String(userText || ""),
+        error: null,
+      };
       const refusalText = this.formatInvariantRefusal(decision.invariantCheck);
       this.history.push({
         role: "assistant",
@@ -1181,13 +1322,34 @@ export class Agent {
         refused: true,
       };
     }
+    try {
+      if (this.ragConfig.enabled) {
+        return this.answerWithRag({
+          userText,
+          userMsg,
+          draftPlan: decision.draftPlan,
+          invariantCheck: decision.invariantCheck,
+        });
+      }
 
-    return this.generateFinalResponse({
-      userText,
-      userMsg,
-      draftPlan: decision.draftPlan,
-      invariantCheck: decision.invariantCheck,
-    });
+      return this.answerWithoutRag({
+        userText,
+        userMsg,
+        draftPlan: decision.draftPlan,
+        invariantCheck: decision.invariantCheck,
+      });
+    } catch (error) {
+      if (this.ragConfig.enabled) {
+        this.lastRagResult = {
+          enabled: true,
+          chunks: [],
+          question: String(userText || ""),
+          error: error && error.message ? error.message : String(error),
+        };
+        this._emitStateChanged();
+      }
+      throw error;
+    }
   }
 
   static extractAnswerText(dto, apiMode = API_MODES.PROXYAPI_RESPONSES) {

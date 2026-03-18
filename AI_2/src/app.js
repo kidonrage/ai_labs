@@ -17,6 +17,7 @@ import {
   renderHistory,
   renderFactsPanel,
   renderInvariantPanel,
+  renderRagPanel,
   renderTaskStatus,
   renderTotalsBar,
   setBusy,
@@ -589,6 +590,7 @@ function bindAgentToActiveChat() {
   }
   boundAgent.setLongTermMemory(store.longTermMemory);
   boundAgent.setUserProfile(profileToAgentPrefs(getActiveProfile()));
+  $("ragMode").value = boundAgent.ragConfig && boundAgent.ragConfig.enabled ? "on" : "off";
 
   boundAgent.onStateChanged = (state) => {
     // Ignore stale callbacks from previously bound agent instances.
@@ -620,6 +622,7 @@ function bindAgentToActiveChat() {
       state.invariants || boundAgent.invariants,
       state.lastInvariantCheck || boundAgent.lastInvariantCheck,
     );
+    renderRagPanel(state.lastRagResult || boundAgent.lastRagResult);
 
     const historyTotals = computeHistoryTotals(state.history || []);
     const globalTotals = mergeTotals(
@@ -648,6 +651,7 @@ function bindAgentToActiveChat() {
     },
   });
   renderInvariantPanel(boundAgent.invariants, boundAgent.lastInvariantCheck);
+  renderRagPanel(boundAgent.lastRagResult);
   renderInvariantControls();
 
   if (branchState && branchState.config) {
@@ -902,6 +906,9 @@ function syncAgentConfig() {
     apiKey: getEffectiveApiKey(),
     model: $("model").value,
     temperature: Number($("temperature").value),
+  });
+  agent.setRagConfig({
+    enabled: $("ragMode").value === "on",
   });
 }
 
@@ -1213,6 +1220,13 @@ $("deleteChat").addEventListener("click", () => {
 
 $("chatSelect").addEventListener("change", (e) => {
   switchToChat(e.target.value);
+});
+
+$("ragMode").addEventListener("change", () => {
+  if (!agent) return;
+  agent.setRagConfig({
+    enabled: $("ragMode").value === "on",
+  });
 });
 
 $("profileMenuCreate").addEventListener("click", () => {

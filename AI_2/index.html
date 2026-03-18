@@ -66,6 +66,14 @@
           </label>
 
           <label class="field">
+            <span>RAG</span>
+            <select id="ragMode">
+              <option value="off">Без RAG</option>
+              <option value="on">С RAG (top-3)</option>
+            </select>
+          </label>
+
+          <label class="field">
             <span>Чаты</span>
             <select id="chatSelect"></select>
           </label>
@@ -137,6 +145,13 @@
             <button id="continueTask" class="btn secondary" type="button">Continue</button>
             <span class="task-start-hint">Start Task: <code>start: ...</code></span>
           </div>
+        </section>
+        <section id="ragPanel" class="rag-panel" hidden>
+          <div class="rag-panel-head">
+            <div class="task-status-title">RAG Retrieval</div>
+            <div id="ragSummary" class="rag-summary">RAG выключен</div>
+          </div>
+          <div id="ragChunks" class="rag-chunks"></div>
         </section>
         <div id="messages" class="messages" aria-live="polite"></div>
       </main>
