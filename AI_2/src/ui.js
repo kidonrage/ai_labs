@@ -397,6 +397,7 @@ export function setBusy(isBusy) {
     "invariantSelect",
     "addInvariant",
     "removeInvariant",
+    "runRagBatch",
   ];
 
   for (const id of ids) {

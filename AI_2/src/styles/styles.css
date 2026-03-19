@@ -159,6 +159,27 @@ body {
   min-width: 150px;
 }
 
+.batch-run-status {
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(15, 23, 36, 0.55);
+  padding: 10px 12px;
+}
+
+.batch-run-status.is-error {
+  color: #ffd4d4;
+  border-color: rgba(212, 78, 78, 0.35);
+  background: rgba(145, 33, 33, 0.22);
+}
+
+.batch-run-status.is-success {
+  color: #d7f1df;
+  border-color: rgba(84, 177, 116, 0.35);
+  background: rgba(25, 102, 61, 0.22);
+}
+
 .field span {
   display: block;
   font-size: 12px;

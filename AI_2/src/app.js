@@ -11,6 +11,14 @@ import {
   normalizeRagMode,
   RAG_MODE_OPTIONS,
 } from "./rag-modes.js";
+import {
+  buildBatchMarkdownReport,
+  buildBatchReportFilename,
+  downloadMarkdownFile,
+  RAG_TEST_MODES,
+  runRagBatch,
+  TEST_QUESTIONS,
+} from "./rag-batch.js";
 import { loadState, saveState } from "./storage.js";
 import {
   computeHistoryTotals,
@@ -423,6 +431,26 @@ let activeChatId = store.activeChatId;
 let activeProfileId = store.activeProfileId;
 let agent = null;
 let isSending = false;
+let isBatchRunning = false;
+
+function isUiBusy() {
+  return isSending || isBatchRunning;
+}
+
+function setBatchRunStatus(text, tone = "idle") {
+  const el = $("batchRunStatus");
+  if (!el) return;
+
+  const normalizedText = String(text || "").trim();
+  el.hidden = !normalizedText;
+  el.textContent = normalizedText;
+  el.classList.remove("is-error", "is-success");
+  if (tone === "error") {
+    el.classList.add("is-error");
+  } else if (tone === "success") {
+    el.classList.add("is-success");
+  }
+}
 
 function persistStore() {
   store.activeChatId = activeChatId;
@@ -685,7 +713,7 @@ function bindAgentToActiveChat() {
       state.summaryTotals || boundAgent.summaryTotals,
     );
     renderTotalsBar(globalTotals);
-    renderTaskStatus(state.taskState, { isBusy: isSending });
+    renderTaskStatus(state.taskState, { isBusy: isUiBusy() });
     renderInvariantControls();
   };
   renderFactsPanel({
@@ -744,7 +772,7 @@ function bindAgentToActiveChat() {
     renderTotalsBar(mergeTotals(defaultTotals(), boundAgent.summaryTotals));
   }
 
-  renderTaskStatus(boundAgent.taskState, { isBusy: isSending });
+  renderTaskStatus(boundAgent.taskState, { isBusy: isUiBusy() });
   renderInvariantControls();
 }
 
@@ -965,6 +993,69 @@ function syncAgentConfig() {
   agent.setRagConfig(buildRagConfigFromUi(agent.ragConfig));
 }
 
+function formatBatchProgress(progress) {
+  if (!progress || typeof progress !== "object") {
+    return "Идет batch-прогон RAG.";
+  }
+
+  const questionNumber = Number(progress.questionIndex) + 1;
+  const questionCount = Number(progress.questionCount) || TEST_QUESTIONS.length;
+  const modeNumber = Number(progress.modeIndex) + 1;
+  const modeCount = Number(progress.modeCount) || RAG_TEST_MODES.length;
+  const completedRuns = Number(progress.completedRuns) || 0;
+  const totalRuns = Number(progress.totalRuns) || questionCount * modeCount;
+  const phase = progress.phase === "completed" ? "Завершено" : "Выполняется";
+
+  return `${phase}: вопрос ${questionNumber}/${questionCount}, режим ${modeNumber}/${modeCount}, выполнено ${completedRuns} из ${totalRuns}.`;
+}
+
+async function handleRunRagBatch() {
+  if (!agent || isUiBusy()) return;
+
+  syncAgentConfig();
+  isBatchRunning = true;
+  setBusy(isUiBusy());
+  setBatchRunStatus("Подготовка batch-прогона RAG...");
+
+  const generatedAt = new Date();
+  try {
+    const results = await runRagBatch(agent, {
+      questions: TEST_QUESTIONS,
+      modes: RAG_TEST_MODES,
+      onProgress(progress) {
+        setBatchRunStatus(formatBatchProgress(progress));
+      },
+    });
+
+    const markdown = buildBatchMarkdownReport(results, {
+      generatedAt,
+      questions: TEST_QUESTIONS,
+      modes: RAG_TEST_MODES,
+      model: agent.model,
+      indexUrl: agent.ragConfig.indexUrl,
+      embeddingModel: agent.ragConfig.embeddingModel,
+    });
+    downloadMarkdownFile(markdown, buildBatchReportFilename(generatedAt));
+
+    const errorCount = results.filter((item) => item.error).length;
+    setBatchRunStatus(
+      errorCount > 0
+        ? `Отчет сформирован и скачан. Ошибок в прогонах: ${errorCount}.`
+        : "Отчет сформирован и скачан.",
+      errorCount > 0 ? "error" : "success",
+    );
+  } catch (error) {
+    setBatchRunStatus(
+      `Batch-прогон не завершен: ${error && error.message ? error.message : String(error)}`,
+      "error",
+    );
+  } finally {
+    isBatchRunning = false;
+    setBusy(isUiBusy());
+    renderTaskStatus(agent.taskState, { isBusy: isUiBusy() });
+  }
+}
+
 function parseTaskCommand(text) {
   const trimmed = String(text || "").trim();
   if (!trimmed) return null;
@@ -1126,14 +1217,14 @@ async function handleTaskCommandOrStep(text) {
 }
 
 async function sendTaskControlCommand(commandText) {
-  if (!agent || isSending) return;
+  if (!agent || isUiBusy()) return;
   $("input").value = commandText;
   await handleSend();
 }
 
 async function handleSend() {
   const text = $("input").value;
-  if (!text.trim() || !agent || isSending) return;
+  if (!text.trim() || !agent || isUiBusy()) return;
 
   syncAgentConfig();
   const historyBaselineLength = Array.isArray(agent.history)
@@ -1157,7 +1248,7 @@ async function handleSend() {
   $("input").focus();
 
   isSending = true;
-  setBusy(true);
+  setBusy(isUiBusy());
 
   const typing = document.createElement("div");
   typing.className = "msg assistant";
@@ -1212,8 +1303,8 @@ async function handleSend() {
     });
   } finally {
     isSending = false;
-    setBusy(false);
-    renderTaskStatus(agent.taskState, { isBusy: isSending });
+    setBusy(isUiBusy());
+    renderTaskStatus(agent.taskState, { isBusy: isUiBusy() });
     renderChatSelector();
   }
 }
@@ -1269,6 +1360,10 @@ $("renameChat").addEventListener("click", () => {
 
 $("deleteChat").addEventListener("click", () => {
   deleteActiveChat();
+});
+
+$("runRagBatch").addEventListener("click", async () => {
+  await handleRunRagBatch();
 });
 
 $("chatSelect").addEventListener("change", (e) => {
