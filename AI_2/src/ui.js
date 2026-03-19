@@ -6,12 +6,22 @@ import {
   formatTime,
   formatTimeFromISO,
 } from "./helpers.js";
+import { getRagModeLabel } from "./rag-modes.js";
 
 const $ = (id) => document.getElementById(id);
 
 function formatCost(x) {
   if (!Number.isFinite(x)) return null;
   return `${round4(x).toFixed(4)} ₽`;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 export function messageStatsLines(message) {
@@ -272,8 +282,9 @@ function makeRagSnippet(text, maxLength = 220) {
 export function renderRagPanel(ragResult) {
   const panel = $("ragPanel");
   const summary = $("ragSummary");
+  const meta = $("ragMeta");
   const chunksWrap = $("ragChunks");
-  if (!panel || !summary || !chunksWrap) return;
+  if (!panel || !summary || !meta || !chunksWrap) return;
 
   const result =
     ragResult && typeof ragResult === "object" && !Array.isArray(ragResult)
@@ -284,6 +295,8 @@ export function renderRagPanel(ragResult) {
     panel.hidden = true;
     panel.open = false;
     summary.textContent = "RAG выключен";
+    meta.hidden = true;
+    meta.innerHTML = "";
     chunksWrap.innerHTML = "";
     return;
   }
@@ -293,12 +306,53 @@ export function renderRagPanel(ragResult) {
 
   if (typeof result.error === "string" && result.error.trim()) {
     summary.textContent = `Ошибка RAG: ${result.error}`;
+    meta.hidden = true;
+    meta.innerHTML = "";
     chunksWrap.innerHTML = "";
     return;
   }
 
   const chunks = Array.isArray(result.chunks) ? result.chunks : [];
-  summary.textContent = `Найдено чанков: ${chunks.length}`;
+  const candidatesBefore = Array.isArray(result.candidatesBeforeFilter)
+    ? result.candidatesBeforeFilter
+    : [];
+  const configUsed =
+    result.configUsed && typeof result.configUsed === "object"
+      ? result.configUsed
+      : {};
+  const debug =
+    result.debug && typeof result.debug === "object" ? result.debug : {};
+  const filteringMeta =
+    debug.filteringMeta && typeof debug.filteringMeta === "object"
+      ? debug.filteringMeta
+      : null;
+  const modeLabel = getRagModeLabel(configUsed.mode);
+
+  summary.textContent = `Режим: ${modeLabel} • Чанков: ${chunks.length}`;
+  meta.hidden = false;
+  meta.innerHTML = [
+    `<div class="rag-meta-item"><span>Режим</span><strong>${escapeHtml(modeLabel)}</strong></div>`,
+    `<div class="rag-meta-item"><span>Retrieval query</span><strong>${String(
+      escapeHtml(result.retrievalQuery || "—"),
+    )}</strong></div>`,
+    `<div class="rag-meta-item"><span>Rewrite</span><strong>${
+      result.rewriteApplied ? "Да" : "Нет"
+    }</strong></div>`,
+    `<div class="rag-meta-item"><span>Фильтрация</span><strong>${
+      configUsed.filteringEnabled ? "Да" : "Нет"
+    }</strong></div>`,
+    `<div class="rag-meta-item"><span>Кандидатов до фильтра</span><strong>${
+      candidatesBefore.length
+    }</strong></div>`,
+    `<div class="rag-meta-item"><span>Чанков после отбора</span><strong>${
+      chunks.length
+    }</strong></div>`,
+    `<div class="rag-meta-item"><span>Threshold</span><strong>${
+      filteringMeta && Number.isFinite(filteringMeta.threshold)
+        ? filteringMeta.threshold.toFixed(2)
+        : "—"
+    }</strong></div>`,
+  ].join("");
 
   if (chunks.length === 0) {
     chunksWrap.innerHTML = '<div class="rag-empty">Подходящие чанки не найдены.</div>';
@@ -313,9 +367,9 @@ export function renderRagPanel(ragResult) {
           <div class="rag-chunk-row"><strong>Similarity:</strong> ${
             Number.isFinite(chunk.similarity) ? chunk.similarity.toFixed(4) : "n/a"
           }</div>
-          <div class="rag-chunk-row"><strong>Source:</strong> ${chunk.source || "unknown"}</div>
-          <div class="rag-chunk-row"><strong>Section:</strong> ${chunk.section || "unknown"}</div>
-          <div class="rag-chunk-text">${makeRagSnippet(chunk.text)}</div>
+          <div class="rag-chunk-row"><strong>Source:</strong> ${escapeHtml(chunk.source || "unknown")}</div>
+          <div class="rag-chunk-row"><strong>Section:</strong> ${escapeHtml(chunk.section || "unknown")}</div>
+          <div class="rag-chunk-text">${escapeHtml(makeRagSnippet(chunk.text))}</div>
         </article>
       `,
     )
@@ -336,7 +390,8 @@ export function setBusy(isBusy) {
     "model",
     "temperature",
     "baseUrl",
-    "ragMode",
+    "ragEnabled",
+    "ragRetrievalMode",
     "pauseTask",
     "continueTask",
     "invariantSelect",

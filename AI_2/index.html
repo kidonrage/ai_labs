@@ -67,10 +67,15 @@
 
           <label class="field">
             <span>RAG</span>
-            <select id="ragMode">
+            <select id="ragEnabled">
               <option value="off">Без RAG</option>
-              <option value="on">С RAG (top-3)</option>
+              <option value="on">С RAG</option>
             </select>
+          </label>
+
+          <label class="field">
+            <span>Режим RAG</span>
+            <select id="ragRetrievalMode"></select>
           </label>
 
           <label class="field">
@@ -151,6 +156,7 @@
             <span class="task-status-title">RAG Retrieval</span>
             <span id="ragSummary" class="rag-summary">RAG выключен</span>
           </summary>
+          <div id="ragMeta" class="rag-meta" hidden></div>
           <div id="ragChunks" class="rag-chunks"></div>
         </details>
         <div id="messages" class="messages" aria-live="polite"></div>

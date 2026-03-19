@@ -5,6 +5,12 @@ import {
   endpointForApiMode,
   inferApiMode,
 } from "./api-profiles.js";
+import { getRagModeConfig } from "./rag.js";
+import {
+  DEFAULT_RAG_MODE,
+  normalizeRagMode,
+  RAG_MODE_OPTIONS,
+} from "./rag-modes.js";
 import { loadState, saveState } from "./storage.js";
 import {
   computeHistoryTotals,
@@ -27,6 +33,8 @@ const $ = (id) => document.getElementById(id);
 const privateConfig = await loadPrivateConfig();
 const privateApiKey = getPrivateApiKey(privateConfig);
 
+populateRagModeSelect();
+
 async function loadPrivateConfig() {
   try {
     const mod = await import("./config/private.config.js");
@@ -38,6 +46,53 @@ async function loadPrivateConfig() {
 
 function getPrivateApiKey(cfg) {
   return cfg && typeof cfg.apiKey === "string" ? cfg.apiKey.trim() : "";
+}
+
+function populateRagModeSelect() {
+  const select = $("ragRetrievalMode");
+  if (!select) return;
+
+  select.innerHTML = RAG_MODE_OPTIONS.map(
+    (option) => `<option value="${option.value}">${option.label}</option>`,
+  ).join("");
+  select.value = DEFAULT_RAG_MODE;
+}
+
+function pickRagConfigOverrides(source) {
+  const raw = source && typeof source === "object" ? source : {};
+  return {
+    indexUrl: raw.indexUrl,
+    embeddingApiUrl: raw.embeddingApiUrl,
+    embeddingModel: raw.embeddingModel,
+    minSimilarity: raw.minSimilarity,
+    rewriteApiMode: raw.rewriteApiMode,
+    rewriteBaseUrl: raw.rewriteBaseUrl,
+    rewriteModel: raw.rewriteModel,
+    rewriteTemperature: raw.rewriteTemperature,
+  };
+}
+
+function buildRagConfigFromUi(baseConfig = {}) {
+  const selectedMode = normalizeRagMode($("ragRetrievalMode")?.value);
+  return {
+    ...getRagModeConfig(selectedMode, pickRagConfigOverrides(baseConfig)),
+    enabled: $("ragEnabled")?.value === "on",
+  };
+}
+
+function syncRagControlsFromAgent(boundAgent) {
+  const ragConfig =
+    boundAgent && boundAgent.ragConfig && typeof boundAgent.ragConfig === "object"
+      ? boundAgent.ragConfig
+      : {};
+  const enabledSelect = $("ragEnabled");
+  const modeSelect = $("ragRetrievalMode");
+  if (enabledSelect) {
+    enabledSelect.value = ragConfig.enabled ? "on" : "off";
+  }
+  if (modeSelect) {
+    modeSelect.value = normalizeRagMode(ragConfig.mode);
+  }
 }
 
 function getEffectiveApiKey() {
@@ -590,7 +645,7 @@ function bindAgentToActiveChat() {
   }
   boundAgent.setLongTermMemory(store.longTermMemory);
   boundAgent.setUserProfile(profileToAgentPrefs(getActiveProfile()));
-  $("ragMode").value = boundAgent.ragConfig && boundAgent.ragConfig.enabled ? "on" : "off";
+  syncRagControlsFromAgent(boundAgent);
 
   boundAgent.onStateChanged = (state) => {
     // Ignore stale callbacks from previously bound agent instances.
@@ -907,9 +962,7 @@ function syncAgentConfig() {
     model: $("model").value,
     temperature: Number($("temperature").value),
   });
-  agent.setRagConfig({
-    enabled: $("ragMode").value === "on",
-  });
+  agent.setRagConfig(buildRagConfigFromUi(agent.ragConfig));
 }
 
 function parseTaskCommand(text) {
@@ -1222,11 +1275,14 @@ $("chatSelect").addEventListener("change", (e) => {
   switchToChat(e.target.value);
 });
 
-$("ragMode").addEventListener("change", () => {
+$("ragEnabled").addEventListener("change", () => {
   if (!agent) return;
-  agent.setRagConfig({
-    enabled: $("ragMode").value === "on",
-  });
+  agent.setRagConfig(buildRagConfigFromUi(agent.ragConfig));
+});
+
+$("ragRetrievalMode").addEventListener("change", () => {
+  if (!agent) return;
+  agent.setRagConfig(buildRagConfigFromUi(agent.ragConfig));
 });
 
 $("profileMenuCreate").addEventListener("click", () => {

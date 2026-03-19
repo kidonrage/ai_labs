@@ -281,6 +281,7 @@ export class Agent {
       retrievalQuery: "",
       contextText: "",
       candidatesBeforeFilter: [],
+      configUsed: null,
       debug: null,
       error: null,
     };
@@ -525,6 +526,12 @@ export class Agent {
                   : -1,
               }))
           : [],
+        configUsed:
+          state.lastRagResult.configUsed &&
+          typeof state.lastRagResult.configUsed === "object" &&
+          !Array.isArray(state.lastRagResult.configUsed)
+            ? state.lastRagResult.configUsed
+            : null,
         debug:
           state.lastRagResult.debug &&
           typeof state.lastRagResult.debug === "object" &&
@@ -1372,6 +1379,7 @@ export class Agent {
       retrievalQuery: "",
       contextText: "",
       candidatesBeforeFilter: [],
+      configUsed: null,
       debug: null,
       error: null,
     };
@@ -1439,6 +1447,7 @@ export class Agent {
         retrievalQuery: "",
         contextText: "",
         candidatesBeforeFilter: [],
+        configUsed: null,
         debug: null,
         error: null,
       };

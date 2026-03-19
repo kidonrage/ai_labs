@@ -276,6 +276,33 @@ body {
   gap: 10px;
 }
 
+.rag-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.rag-meta-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(11, 16, 27, 0.72);
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.rag-meta-item span {
+  font-size: 11px;
+  color: var(--muted-2);
+}
+
+.rag-meta-item strong {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
 .rag-chunk {
   border: 1px solid var(--border);
   border-radius: 12px;
