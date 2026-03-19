@@ -77,6 +77,14 @@ function buildProfilePriorityInstructions(userProfile) {
   return lines.join("\n");
 }
 
+function normalizePositiveInteger(value, fallback) {
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function normalizeFiniteNumber(value, fallback) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
 export class Agent {
   static makeDefaultInvariants() {
     return normalizeInvariants(null);
@@ -251,15 +259,29 @@ export class Agent {
     this.userProfile = normalizeUserProfile(null);
     this.ragConfig = {
       enabled: false,
+      mode: "baseline",
       indexUrl: "./static/index_structured.json",
       embeddingApiUrl: "http://localhost:11434/api/embed",
       embeddingModel: "embeddinggemma",
       topK: 3,
+      topKBefore: 8,
+      topKAfter: 3,
+      minSimilarity: 0.45,
+      rewriteEnabled: false,
+      filteringEnabled: false,
+      rewriteApiMode: "ollama_chat",
+      rewriteBaseUrl: "http://localhost:11434",
+      rewriteModel: "gemma3",
+      rewriteTemperature: 0,
     };
     this.lastRagResult = {
       enabled: false,
       chunks: [],
       question: "",
+      retrievalQuery: "",
+      contextText: "",
+      candidatesBeforeFilter: [],
+      debug: null,
       error: null,
     };
 
@@ -345,9 +367,21 @@ export class Agent {
       ...this.ragConfig,
       ...next,
       enabled: Boolean(next.enabled ?? this.ragConfig.enabled),
-      topK: Number.isInteger(next.topK) && next.topK > 0
-        ? next.topK
-        : this.ragConfig.topK,
+      topK: normalizePositiveInteger(next.topK, this.ragConfig.topK),
+      topKBefore: normalizePositiveInteger(next.topKBefore, this.ragConfig.topKBefore),
+      topKAfter: normalizePositiveInteger(next.topKAfter, this.ragConfig.topKAfter),
+      minSimilarity: normalizeFiniteNumber(
+        next.minSimilarity,
+        this.ragConfig.minSimilarity,
+      ),
+      rewriteEnabled:
+        typeof next.rewriteEnabled === "boolean"
+          ? next.rewriteEnabled
+          : this.ragConfig.rewriteEnabled,
+      filteringEnabled:
+        typeof next.filteringEnabled === "boolean"
+          ? next.filteringEnabled
+          : this.ragConfig.filteringEnabled,
     };
     this._emitStateChanged();
   }
@@ -427,10 +461,27 @@ export class Agent {
         ...this.ragConfig,
         ...state.ragConfig,
         enabled: Boolean(state.ragConfig.enabled),
-        topK:
-          Number.isInteger(state.ragConfig.topK) && state.ragConfig.topK > 0
-            ? state.ragConfig.topK
-            : this.ragConfig.topK,
+        topK: normalizePositiveInteger(state.ragConfig.topK, this.ragConfig.topK),
+        topKBefore: normalizePositiveInteger(
+          state.ragConfig.topKBefore,
+          this.ragConfig.topKBefore,
+        ),
+        topKAfter: normalizePositiveInteger(
+          state.ragConfig.topKAfter,
+          this.ragConfig.topKAfter,
+        ),
+        minSimilarity: normalizeFiniteNumber(
+          state.ragConfig.minSimilarity,
+          this.ragConfig.minSimilarity,
+        ),
+        rewriteEnabled:
+          typeof state.ragConfig.rewriteEnabled === "boolean"
+            ? state.ragConfig.rewriteEnabled
+            : this.ragConfig.rewriteEnabled,
+        filteringEnabled:
+          typeof state.ragConfig.filteringEnabled === "boolean"
+            ? state.ragConfig.filteringEnabled
+            : this.ragConfig.filteringEnabled,
       };
     }
     if (
@@ -444,9 +495,41 @@ export class Agent {
           typeof state.lastRagResult.question === "string"
             ? state.lastRagResult.question
             : "",
+        retrievalQuery:
+          typeof state.lastRagResult.retrievalQuery === "string"
+            ? state.lastRagResult.retrievalQuery
+            : "",
+        contextText:
+          typeof state.lastRagResult.contextText === "string"
+            ? state.lastRagResult.contextText
+            : "",
         error:
           typeof state.lastRagResult.error === "string"
             ? state.lastRagResult.error
+            : null,
+        candidatesBeforeFilter: Array.isArray(
+          state.lastRagResult.candidatesBeforeFilter,
+        )
+          ? state.lastRagResult.candidatesBeforeFilter
+              .filter((chunk) => chunk && typeof chunk === "object")
+              .map((chunk) => ({
+                chunk_id:
+                  typeof chunk.chunk_id === "string" ? chunk.chunk_id : null,
+                source:
+                  typeof chunk.source === "string" ? chunk.source : "unknown",
+                section:
+                  typeof chunk.section === "string" ? chunk.section : "unknown",
+                text: typeof chunk.text === "string" ? chunk.text : "",
+                similarity: Number.isFinite(chunk.similarity)
+                  ? chunk.similarity
+                  : -1,
+              }))
+          : [],
+        debug:
+          state.lastRagResult.debug &&
+          typeof state.lastRagResult.debug === "object" &&
+          !Array.isArray(state.lastRagResult.debug)
+            ? state.lastRagResult.debug
             : null,
         chunks: Array.isArray(state.lastRagResult.chunks)
           ? state.lastRagResult.chunks
@@ -1286,6 +1369,10 @@ export class Agent {
       enabled: false,
       chunks: [],
       question: String(userText || ""),
+      retrievalQuery: "",
+      contextText: "",
+      candidatesBeforeFilter: [],
+      debug: null,
       error: null,
     };
     this._emitStateChanged();
@@ -1305,6 +1392,7 @@ export class Agent {
     const rag = await retrieveChunks(userText, this.ragConfig);
     this.lastRagResult = {
       enabled: true,
+      ...rag,
       chunks: rag.chunks,
       question: String(userText || ""),
       error: null,
@@ -1348,6 +1436,10 @@ export class Agent {
         enabled: Boolean(this.ragConfig.enabled),
         chunks: [],
         question: String(userText || ""),
+        retrievalQuery: "",
+        contextText: "",
+        candidatesBeforeFilter: [],
+        debug: null,
         error: null,
       };
       const refusalText = this.formatInvariantRefusal(decision.invariantCheck);
