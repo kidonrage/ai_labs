@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   buildBatchMarkdownReport,
   buildBatchReportFilename,
+  MARKDOWN_EXPORT_QUESTIONS,
   RAG_TEST_MODES,
   TEST_QUESTIONS,
 } from "../rag-batch.js";
@@ -15,10 +16,31 @@ async function main() {
       notes: "",
       mode: RAG_TEST_MODES[0],
       answerText: "Тестовый ответ",
+      answerResult: {
+        answer: "Тестовый ответ",
+        sources: [{ source: "doc", section: "Analytics", chunk_id: "c1" }],
+        quotes: [
+          {
+            source: "doc",
+            section: "Analytics",
+            chunk_id: "c1",
+            quote: "preview text",
+          },
+        ],
+        needsClarification: false,
+        weakContext: false,
+      },
       retrievalQuery: "analytics alternatives google analytics",
       rewriteApplied: false,
       candidatesBeforeFilterCount: 3,
       finalChunksCount: 2,
+      maxSimilarity: 0.91,
+      averageSimilarity: 0.895,
+      needsClarification: false,
+      weakContext: false,
+      sourcesPresent: true,
+      quotesPresent: true,
+      evidenceConsistent: true,
       topChunkIds: ["c1", "c2"],
       topSimilarities: [0.91, 0.88],
       minSimilarity: null,
@@ -44,10 +66,18 @@ async function main() {
       notes: "",
       mode: RAG_TEST_MODES[1],
       answerText: "",
+      answerResult: null,
       retrievalQuery: "",
       rewriteApplied: false,
       candidatesBeforeFilterCount: 0,
       finalChunksCount: 0,
+      maxSimilarity: null,
+      averageSimilarity: null,
+      needsClarification: false,
+      weakContext: false,
+      sourcesPresent: false,
+      quotesPresent: false,
+      evidenceConsistent: false,
       topChunkIds: [],
       topSimilarities: [],
       minSimilarity: null,
@@ -73,8 +103,16 @@ async function main() {
   assert.match(markdown, /## Вопрос 1/);
   assert.match(markdown, /### baseline/);
   assert.match(markdown, /Тестовый ответ/);
+  assert.match(markdown, /Sources present: yes/);
+  assert.match(markdown, /Quotes present: yes/);
+  assert.match(markdown, /#### Sources/);
+  assert.match(markdown, /#### Quotes/);
   assert.match(markdown, /network error/);
   assert.match(markdown, /# Summary/);
+  assert.match(markdown, /Ответов с источниками: 1/);
+  assert.match(markdown, /Ответов с цитатами: 1/);
+  assert.equal(MARKDOWN_EXPORT_QUESTIONS.length, 5);
+  assert.deepEqual(MARKDOWN_EXPORT_QUESTIONS, TEST_QUESTIONS.slice(0, 5));
 
   const filename = buildBatchReportFilename(new Date("2026-03-19T12:34:00"));
   assert.equal(filename, "rag-batch-report-2026-03-19-12-34.md");

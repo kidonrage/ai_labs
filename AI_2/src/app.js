@@ -15,6 +15,7 @@ import {
   buildBatchMarkdownReport,
   buildBatchReportFilename,
   downloadMarkdownFile,
+  MARKDOWN_EXPORT_QUESTIONS,
   RAG_TEST_MODES,
   runRagBatch,
   TEST_QUESTIONS,
@@ -73,6 +74,8 @@ function pickRagConfigOverrides(source) {
     embeddingApiUrl: raw.embeddingApiUrl,
     embeddingModel: raw.embeddingModel,
     minSimilarity: raw.minSimilarity,
+    answerMinSimilarity: raw.answerMinSimilarity,
+    forceIDontKnowOnWeakContext: raw.forceIDontKnowOnWeakContext,
     rewriteApiMode: raw.rewriteApiMode,
     rewriteBaseUrl: raw.rewriteBaseUrl,
     rewriteModel: raw.rewriteModel,
@@ -1029,7 +1032,7 @@ async function handleRunRagBatch() {
 
     const markdown = buildBatchMarkdownReport(results, {
       generatedAt,
-      questions: TEST_QUESTIONS,
+      questions: MARKDOWN_EXPORT_QUESTIONS,
       modes: RAG_TEST_MODES,
       model: agent.model,
       indexUrl: agent.ragConfig.indexUrl,

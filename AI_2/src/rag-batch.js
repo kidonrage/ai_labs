@@ -1,5 +1,11 @@
 import { Agent } from "./agent.js";
-import { getRagModeConfig } from "./rag.js";
+import {
+  getRagModeConfig,
+  hasQuotes,
+  hasSources,
+  isConsistentEnough,
+  isWeakContext,
+} from "./rag.js";
 import { getRagModeLabel } from "./rag-modes.js";
 
 export const RAG_TEST_MODES = Object.freeze([
@@ -82,6 +88,8 @@ export const TEST_QUESTIONS = Object.freeze([
   },
 ]);
 
+export const MARKDOWN_EXPORT_QUESTIONS = Object.freeze(TEST_QUESTIONS.slice(0, 5));
+
 function pickRagOverrides(ragConfig = {}) {
   return {
     indexUrl: ragConfig.indexUrl,
@@ -156,6 +164,12 @@ export async function runAgentForQuestion(sourceAgent, questionCase, mode) {
     : [];
   const configUsed =
     rag.configUsed && typeof rag.configUsed === "object" ? rag.configUsed : {};
+  const answerResult =
+    response && response.answerResult && typeof response.answerResult === "object"
+      ? response.answerResult
+      : null;
+  const diagnostics =
+    rag.diagnostics && typeof rag.diagnostics === "object" ? rag.diagnostics : {};
 
   return {
     questionId: questionCase.id,
@@ -165,10 +179,20 @@ export async function runAgentForQuestion(sourceAgent, questionCase, mode) {
     notes: typeof questionCase.notes === "string" ? questionCase.notes : "",
     mode,
     answerText: response && typeof response.answer === "string" ? response.answer : "",
+    answerResult,
     retrievalQuery: typeof rag.retrievalQuery === "string" ? rag.retrievalQuery : "",
     rewriteApplied: Boolean(rag.rewriteApplied),
     candidatesBeforeFilterCount: candidatesBeforeFilter.length,
     finalChunksCount: chunks.length,
+    maxSimilarity: Number.isFinite(diagnostics.maxSimilarity) ? diagnostics.maxSimilarity : null,
+    averageSimilarity: Number.isFinite(diagnostics.averageSimilarity)
+      ? diagnostics.averageSimilarity
+      : null,
+    needsClarification: Boolean(answerResult && answerResult.needsClarification),
+    weakContext: isWeakContext(answerResult),
+    sourcesPresent: hasSources(answerResult),
+    quotesPresent: hasQuotes(answerResult),
+    evidenceConsistent: isConsistentEnough(answerResult, chunks),
     topChunkIds: chunks.map((chunk) => chunk.chunk_id).filter(Boolean),
     topSimilarities: chunks
       .map((chunk) => chunk.similarity)
@@ -242,10 +266,18 @@ export async function runRagBatch(sourceAgent, options = {}) {
           notes: typeof questionCase.notes === "string" ? questionCase.notes : "",
           mode,
           answerText: "",
+          answerResult: null,
           retrievalQuery: "",
           rewriteApplied: false,
           candidatesBeforeFilterCount: 0,
           finalChunksCount: 0,
+          maxSimilarity: null,
+          averageSimilarity: null,
+          needsClarification: false,
+          weakContext: false,
+          sourcesPresent: false,
+          quotesPresent: false,
+          evidenceConsistent: false,
           topChunkIds: [],
           topSimilarities: [],
           minSimilarity: null,
@@ -345,13 +377,46 @@ function formatIdList(values) {
   return list.length > 0 ? list.join(", ") : "—";
 }
 
+function formatSourcesList(answerResult) {
+  const list =
+    answerResult && Array.isArray(answerResult.sources) ? answerResult.sources : [];
+  const lines = ["#### Sources"];
+  if (list.length === 0) {
+    lines.push("- none");
+    return lines.join("\n");
+  }
+  for (const source of list) {
+    lines.push(
+      `- ${source.source || "unknown"} | ${source.section || "unknown"} | ${
+        source.chunk_id || "unknown"
+      }`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function formatQuotesList(answerResult) {
+  const list = answerResult && Array.isArray(answerResult.quotes) ? answerResult.quotes : [];
+  const lines = ["#### Quotes"];
+  if (list.length === 0) {
+    lines.push("- none");
+    return lines.join("\n");
+  }
+  for (const quote of list) {
+    lines.push(`- [${quote.chunk_id || "unknown"}] "${quote.quote || ""}"`);
+  }
+  return lines.join("\n");
+}
+
 /**
  * Builds a markdown report from batch-run results.
  */
 export function buildBatchMarkdownReport(results, metadata = {}) {
   const normalizedResults = Array.isArray(results) ? results : [];
   const generatedAt = metadata.generatedAt || new Date();
-  const questionCases = Array.isArray(metadata.questions) ? metadata.questions : TEST_QUESTIONS;
+  const questionCases = Array.isArray(metadata.questions)
+    ? metadata.questions
+    : MARKDOWN_EXPORT_QUESTIONS;
   const modes = Array.isArray(metadata.modes) ? metadata.modes : RAG_TEST_MODES;
 
   const lines = [
@@ -396,11 +461,18 @@ export function buildBatchMarkdownReport(results, metadata = {}) {
       lines.push(`- Rewrite applied: ${run.rewriteApplied ? "true" : "false"}`);
       lines.push(`- Candidates before filter: ${run.candidatesBeforeFilterCount}`);
       lines.push(`- Final chunks count: ${run.finalChunksCount}`);
+      lines.push(`- Max similarity: ${run.maxSimilarity ?? "—"}`);
+      lines.push(`- Average similarity: ${run.averageSimilarity ?? "—"}`);
       lines.push(`- Top chunk ids: ${formatIdList(run.topChunkIds)}`);
       lines.push(`- Top similarities: ${formatNumberList(run.topSimilarities)}`);
       lines.push(`- topKBefore: ${run.topKBefore ?? "—"}`);
       lines.push(`- topKAfter: ${run.topKAfter ?? "—"}`);
       lines.push(`- minSimilarity: ${run.minSimilarity ?? "—"}`);
+      lines.push(`- Sources present: ${run.sourcesPresent ? "yes" : "no"}`);
+      lines.push(`- Quotes present: ${run.quotesPresent ? "yes" : "no"}`);
+      lines.push(`- Needs clarification: ${run.needsClarification ? "true" : "false"}`);
+      lines.push(`- Weak context: ${run.weakContext ? "true" : "false"}`);
+      lines.push(`- Evidence consistent: ${run.evidenceConsistent ? "true" : "false"}`);
       lines.push(formatChunkList(run.chunks));
       lines.push("");
 
@@ -413,6 +485,10 @@ export function buildBatchMarkdownReport(results, metadata = {}) {
       lines.push("- Answer:");
       lines.push("");
       lines.push(run.answerText || "(пустой ответ)");
+      lines.push("");
+      lines.push(formatSourcesList(run.answerResult));
+      lines.push("");
+      lines.push(formatQuotesList(run.answerResult));
       lines.push("");
     }
 
@@ -446,6 +522,10 @@ export function buildBatchMarkdownReport(results, metadata = {}) {
         : 0;
     const rewriteAppliedCount = okRuns.filter((item) => item.rewriteApplied).length;
     const emptyAnswers = okRuns.filter((item) => !String(item.answerText || "").trim()).length;
+    const withSources = okRuns.filter((item) => item.sourcesPresent).length;
+    const withQuotes = okRuns.filter((item) => item.quotesPresent).length;
+    const weakContextCount = okRuns.filter((item) => item.weakContext).length;
+    const clarificationCount = okRuns.filter((item) => item.needsClarification).length;
 
     lines.push(`### ${mode}`);
     lines.push(`- Успешных: ${okRuns.length}`);
@@ -454,6 +534,10 @@ export function buildBatchMarkdownReport(results, metadata = {}) {
     lines.push(`- Среднее число кандидатов до фильтра: ${avgCandidates.toFixed(2)}`);
     lines.push(`- Rewrite applied: ${rewriteAppliedCount}`);
     lines.push(`- Пустых ответов: ${emptyAnswers}`);
+    lines.push(`- Ответов с источниками: ${withSources}`);
+    lines.push(`- Ответов с цитатами: ${withQuotes}`);
+    lines.push(`- Срабатываний weakContext: ${weakContextCount}`);
+    lines.push(`- Needs clarification: ${clarificationCount}`);
     lines.push("");
   }
 

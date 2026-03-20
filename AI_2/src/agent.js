@@ -1,7 +1,11 @@
 import { OpenAIModelPricing } from "./pricing.js";
 import { normalizeUsage } from "./helpers.js";
 import { normalizeInvariants } from "./invariants.store.js";
-import { retrieveChunks } from "./rag.js";
+import {
+  buildAnswerResultFromResponse,
+  makeSafeAnswerResult,
+  retrieveChunks,
+} from "./rag.js";
 import {
   API_MODES,
   endpointForApiMode,
@@ -267,6 +271,8 @@ export class Agent {
       topKBefore: 8,
       topKAfter: 3,
       minSimilarity: 0.45,
+      answerMinSimilarity: 0.05,
+      forceIDontKnowOnWeakContext: true,
       rewriteEnabled: false,
       filteringEnabled: false,
       rewriteApiMode: "ollama_chat",
@@ -281,6 +287,8 @@ export class Agent {
       retrievalQuery: "",
       contextText: "",
       candidatesBeforeFilter: [],
+      diagnostics: null,
+      answerResult: null,
       configUsed: null,
       debug: null,
       error: null,
@@ -375,6 +383,14 @@ export class Agent {
         next.minSimilarity,
         this.ragConfig.minSimilarity,
       ),
+      answerMinSimilarity: normalizeFiniteNumber(
+        next.answerMinSimilarity,
+        this.ragConfig.answerMinSimilarity,
+      ),
+      forceIDontKnowOnWeakContext:
+        typeof next.forceIDontKnowOnWeakContext === "boolean"
+          ? next.forceIDontKnowOnWeakContext
+          : this.ragConfig.forceIDontKnowOnWeakContext,
       rewriteEnabled:
         typeof next.rewriteEnabled === "boolean"
           ? next.rewriteEnabled
@@ -475,6 +491,14 @@ export class Agent {
           state.ragConfig.minSimilarity,
           this.ragConfig.minSimilarity,
         ),
+        answerMinSimilarity: normalizeFiniteNumber(
+          state.ragConfig.answerMinSimilarity,
+          this.ragConfig.answerMinSimilarity,
+        ),
+        forceIDontKnowOnWeakContext:
+          typeof state.ragConfig.forceIDontKnowOnWeakContext === "boolean"
+            ? state.ragConfig.forceIDontKnowOnWeakContext
+            : this.ragConfig.forceIDontKnowOnWeakContext,
         rewriteEnabled:
           typeof state.ragConfig.rewriteEnabled === "boolean"
             ? state.ragConfig.rewriteEnabled
@@ -504,6 +528,18 @@ export class Agent {
           typeof state.lastRagResult.contextText === "string"
             ? state.lastRagResult.contextText
             : "",
+        diagnostics:
+          state.lastRagResult.diagnostics &&
+          typeof state.lastRagResult.diagnostics === "object" &&
+          !Array.isArray(state.lastRagResult.diagnostics)
+            ? state.lastRagResult.diagnostics
+            : null,
+        answerResult:
+          state.lastRagResult.answerResult &&
+          typeof state.lastRagResult.answerResult === "object" &&
+          !Array.isArray(state.lastRagResult.answerResult)
+            ? state.lastRagResult.answerResult
+            : null,
         error:
           typeof state.lastRagResult.error === "string"
             ? state.lastRagResult.error
@@ -1278,31 +1314,13 @@ export class Agent {
     ];
   }
 
-  async generateFinalResponse({
-    userText,
-    userMsg,
-    draftPlan,
-    invariantCheck,
-    rag = null,
-  }) {
-    const input = await this._buildContextInput(userText, {
-      draftPlan,
-      invariantCheck,
-      rag,
-    });
-    const runtimeContext = {
-      draftPlan,
-      invariantCheck,
-      rag,
-    };
+  async _requestModelText({ userMsg = null, input, messages = null, temperature = null }) {
     const url = this._endpointUrl();
     const body = this._buildResponseRequestBody({
       model: this.model,
       input,
-      messages: isOllamaFamilyMode(this.apiMode)
-        ? this._buildOllamaChatMessages(userText, runtimeContext)
-        : null,
-      temperature: this.temperature,
+      messages,
+      temperature: temperature ?? this.temperature,
     });
 
     const resp = await fetch(url, {
@@ -1341,27 +1359,64 @@ export class Agent {
         durationSeconds != null ? durationSeconds : undefined;
     }
 
+    return {
+      answerText,
+      usage,
+      durationSeconds,
+      modelName,
+      costRub,
+      dto,
+    };
+  }
+
+  async generateFinalResponse({
+    userText,
+    userMsg,
+    draftPlan,
+    invariantCheck,
+    rag = null,
+  }) {
+    const input = await this._buildContextInput(userText, {
+      draftPlan,
+      invariantCheck,
+      rag,
+    });
+    const runtimeContext = {
+      draftPlan,
+      invariantCheck,
+      rag,
+    };
+    const completion = await this._requestModelText({
+      userMsg,
+      input,
+      messages: isOllamaFamilyMode(this.apiMode)
+        ? this._buildOllamaChatMessages(userText, runtimeContext)
+        : null,
+      temperature: this.temperature,
+    });
+
     const assistantMsg = {
       role: "assistant",
-      text: answerText,
+      text: completion.answerText,
       at: new Date().toISOString(),
-      model: modelName,
-      requestInputTokens: usage ? usage.inputTokens : undefined,
-      requestOutputTokens: usage ? usage.outputTokens : undefined,
-      requestTotalTokens: usage ? usage.totalTokens : undefined,
-      costRub: costRub != null ? costRub : undefined,
-      durationSeconds: durationSeconds != null ? durationSeconds : undefined,
+      model: completion.modelName,
+      requestInputTokens: completion.usage ? completion.usage.inputTokens : undefined,
+      requestOutputTokens: completion.usage ? completion.usage.outputTokens : undefined,
+      requestTotalTokens: completion.usage ? completion.usage.totalTokens : undefined,
+      costRub: completion.costRub != null ? completion.costRub : undefined,
+      durationSeconds:
+        completion.durationSeconds != null ? completion.durationSeconds : undefined,
     };
     this.history.push(assistantMsg);
 
     this._emitStateChanged();
 
     return {
-      answer: answerText,
-      model: modelName,
-      usage,
-      durationSeconds,
-      costRub,
+      answer: completion.answerText,
+      model: completion.modelName,
+      usage: completion.usage,
+      durationSeconds: completion.durationSeconds,
+      costRub: completion.costRub,
       invariantCheck,
       retrievedChunks: rag && Array.isArray(rag.chunks) ? rag.chunks : [],
       refused: false,
@@ -1379,6 +1434,8 @@ export class Agent {
       retrievalQuery: "",
       contextText: "",
       candidatesBeforeFilter: [],
+      diagnostics: null,
+      answerResult: null,
       configUsed: null,
       debug: null,
       error: null,
@@ -1398,22 +1455,44 @@ export class Agent {
    */
   async answerWithRag({ userText, userMsg, draftPlan, invariantCheck }) {
     const rag = await retrieveChunks(userText, this.ragConfig);
-    this.lastRagResult = {
-      enabled: true,
-      ...rag,
-      chunks: rag.chunks,
-      question: String(userText || ""),
-      error: null,
-    };
-    this._emitStateChanged();
-
-    return this.generateFinalResponse({
+    const response = await this.generateFinalResponse({
       userText,
       userMsg,
       draftPlan,
       invariantCheck,
       rag,
     });
+    const answerResult = buildAnswerResultFromResponse(response.answer, rag, this.ragConfig);
+    const lastAssistantMessage =
+      Array.isArray(this.history) && this.history.length > 0
+        ? this.history[this.history.length - 1]
+        : null;
+    if (lastAssistantMessage && lastAssistantMessage.role === "assistant") {
+      lastAssistantMessage.answerResult = answerResult;
+    }
+    this.lastRagResult = {
+      enabled: true,
+      ...rag,
+      chunks: rag.chunks,
+      question: String(userText || ""),
+      diagnostics: answerResult.diagnostics || rag.diagnostics || null,
+      answerResult,
+      error: null,
+    };
+
+    this._emitStateChanged();
+
+    return {
+      answer: response.answer,
+      answerResult,
+      model: response.model,
+      usage: response.usage,
+      durationSeconds: response.durationSeconds,
+      costRub: response.costRub,
+      invariantCheck,
+      retrievedChunks: rag && Array.isArray(rag.chunks) ? rag.chunks : [],
+      refused: false,
+    };
   }
 
   // =====================
@@ -1447,6 +1526,8 @@ export class Agent {
         retrievalQuery: "",
         contextText: "",
         candidatesBeforeFilter: [],
+        diagnostics: null,
+        answerResult: null,
         configUsed: null,
         debug: null,
         error: null,
@@ -1491,6 +1572,13 @@ export class Agent {
           enabled: true,
           chunks: [],
           question: String(userText || ""),
+          diagnostics: null,
+          answerResult: makeSafeAnswerResult({
+            answer:
+              error && error.message
+                ? `Ошибка: ${error.message}`
+                : `Ошибка: ${String(error)}`,
+          }),
           error: error && error.message ? error.message : String(error),
         };
         this._emitStateChanged();

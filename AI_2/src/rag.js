@@ -14,10 +14,15 @@ const DEFAULT_REWRITE_BASE_URL = "http://localhost:11434";
 const DEFAULT_REWRITE_MODEL = "gemma3";
 const DEFAULT_REWRITE_TEMPERATURE = 0;
 const DEFAULT_MIN_SIMILARITY = 0.45;
+const DEFAULT_ANSWER_MIN_SIMILARITY = 0.05;
 const DEFAULT_TOP_K = 3;
 const DEFAULT_TOP_K_BEFORE = 8;
 const DEFAULT_TOP_K_AFTER = 3;
 const DEFAULT_MODE = "baseline";
+const SAFE_NO_DATA_ANSWER =
+  "Не знаю по имеющемуся контексту. Пожалуйста, уточните вопрос.";
+const SAFE_PARSE_FAILURE_ANSWER =
+  "Не удалось надежно сформировать ответ по найденному контексту. Пожалуйста, уточните вопрос.";
 
 let cachedIndexUrl = null;
 let cachedIndexData = null;
@@ -45,6 +50,319 @@ function normalizeChunkRecord(chunk) {
     similarity:
       chunk && Number.isFinite(chunk.similarity) ? chunk.similarity : -1,
   };
+}
+
+function normalizeNonEmptyString(value, fallback = "") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function normalizeBoolean(value, fallback = false) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function extractJsonObjectFromText(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Best-effort recovery from wrappers around JSON.
+  }
+
+  const startCandidates = [raw.indexOf("{"), raw.indexOf("[")].filter((index) => index >= 0);
+  if (startCandidates.length === 0) return null;
+  const startIndex = Math.min(...startCandidates);
+
+  for (let end = raw.length; end > startIndex; end -= 1) {
+    try {
+      return JSON.parse(raw.slice(startIndex, end).trim());
+    } catch {
+      // keep shrinking
+    }
+  }
+
+  return null;
+}
+
+function stripMarkdownCodeFences(text) {
+  const raw = String(text || "").trim();
+  if (!raw.startsWith("```")) return raw;
+  return raw.replace(/^```[a-zA-Z0-9_-]*\s*/, "").replace(/\s*```$/, "").trim();
+}
+
+function buildChunkMap(retrievedChunks) {
+  return new Map(
+    (Array.isArray(retrievedChunks) ? retrievedChunks : [])
+      .filter((chunk) => chunk && typeof chunk === "object")
+      .map((chunk) => [normalizeNonEmptyString(chunk.chunk_id, ""), chunk]),
+  );
+}
+
+function makeSourceFromChunk(chunk) {
+  return {
+    source: normalizeNonEmptyString(chunk && chunk.source, "unknown"),
+    section: normalizeNonEmptyString(chunk && chunk.section, "unknown"),
+    chunk_id: normalizeNonEmptyString(chunk && chunk.chunk_id, ""),
+  };
+}
+
+function makeQuoteFromChunk(chunk, maxLength = 180) {
+  const text = normalizeNonEmptyString(chunk && chunk.text, "");
+  const compact = text.replace(/\s+/g, " ").trim();
+  const quote =
+    compact.length <= maxLength ? compact : `${compact.slice(0, maxLength).trim()}...`;
+  return {
+    ...makeSourceFromChunk(chunk),
+    quote,
+  };
+}
+
+function pickEvidenceChunks(retrievedChunks, limit = 2) {
+  return (Array.isArray(retrievedChunks) ? retrievedChunks : [])
+    .filter((chunk) => chunk && typeof chunk === "object")
+    .slice(0, limit);
+}
+
+function buildDerivedAnswerResult(answer, retrievedChunks, overrides = {}) {
+  const evidenceChunks = pickEvidenceChunks(retrievedChunks, 2);
+  return normalizeAnswerResult(
+    {
+      answer,
+      sources: evidenceChunks.map(makeSourceFromChunk),
+      quotes: evidenceChunks.map((chunk) => makeQuoteFromChunk(chunk)),
+      needsClarification: false,
+      weakContext: false,
+      ...overrides,
+    },
+    overrides,
+  );
+}
+
+export function makeSafeAnswerResult(overrides = {}) {
+  return {
+    answer: SAFE_NO_DATA_ANSWER,
+    sources: [],
+    quotes: [],
+    needsClarification: true,
+    weakContext: true,
+    ...overrides,
+  };
+}
+
+export function normalizeSourceEntry(entry) {
+  const raw = entry && typeof entry === "object" && !Array.isArray(entry) ? entry : {};
+  return {
+    source: normalizeNonEmptyString(raw.source, "unknown"),
+    section: normalizeNonEmptyString(raw.section, "unknown"),
+    chunk_id: normalizeNonEmptyString(raw.chunk_id, ""),
+  };
+}
+
+export function normalizeQuoteEntry(entry) {
+  const raw = entry && typeof entry === "object" && !Array.isArray(entry) ? entry : {};
+  return {
+    source: normalizeNonEmptyString(raw.source, "unknown"),
+    section: normalizeNonEmptyString(raw.section, "unknown"),
+    chunk_id: normalizeNonEmptyString(raw.chunk_id, ""),
+    quote: normalizeNonEmptyString(raw.quote, ""),
+  };
+}
+
+export function normalizeAnswerResult(result, overrides = {}) {
+  const raw = result && typeof result === "object" && !Array.isArray(result) ? result : {};
+  return {
+    answer: normalizeNonEmptyString(raw.answer, ""),
+    sources: Array.isArray(raw.sources) ? raw.sources.map(normalizeSourceEntry) : [],
+    quotes: Array.isArray(raw.quotes) ? raw.quotes.map(normalizeQuoteEntry) : [],
+    needsClarification: normalizeBoolean(raw.needsClarification, false),
+    weakContext: normalizeBoolean(raw.weakContext, false),
+    ...overrides,
+  };
+}
+
+export function buildContextDiagnostics(retrievalResult, config = {}) {
+  const chunks = Array.isArray(
+    retrievalResult && typeof retrievalResult === "object" ? retrievalResult.chunks : null,
+  )
+    ? retrievalResult.chunks
+    : [];
+  const similarities = chunks
+    .map((chunk) => chunk.similarity)
+    .filter((value) => Number.isFinite(value));
+
+  return {
+    finalChunksCount: chunks.length,
+    maxSimilarity: similarities.length > 0 ? Math.max(...similarities) : null,
+    averageSimilarity:
+      similarities.length > 0
+        ? similarities.reduce((sum, value) => sum + value, 0) / similarities.length
+        : null,
+    answerMinSimilarity: normalizeFiniteNumber(
+      config.answerMinSimilarity,
+      DEFAULT_ANSWER_MIN_SIMILARITY,
+    ),
+    forceIDontKnowOnWeakContext: normalizeBoolean(
+      config.forceIDontKnowOnWeakContext,
+      true,
+    ),
+  };
+}
+
+export function evaluateContextStrength(retrievalResult, config = {}) {
+  const diagnostics = buildContextDiagnostics(retrievalResult, config);
+  const weakContext =
+    diagnostics.finalChunksCount === 0 ||
+    !Number.isFinite(diagnostics.maxSimilarity) ||
+    (diagnostics.answerMinSimilarity > 0 &&
+      diagnostics.maxSimilarity < diagnostics.answerMinSimilarity);
+
+  return {
+    ...diagnostics,
+    weakContext,
+  };
+}
+
+export function validateAnswerEvidence(answerResult, retrievedChunks) {
+  const normalized = normalizeAnswerResult(answerResult);
+  const chunks = Array.isArray(retrievedChunks) ? retrievedChunks : [];
+  const chunkMap = buildChunkMap(chunks);
+  const issues = [];
+
+  if (!normalized.answer) {
+    issues.push("answer_missing");
+  }
+
+  for (const source of normalized.sources) {
+    if (!source.chunk_id) {
+      issues.push("source_chunk_id_missing");
+      continue;
+    }
+    const chunk = chunkMap.get(source.chunk_id);
+    if (!chunk) {
+      issues.push(`source_chunk_not_found:${source.chunk_id}`);
+      continue;
+    }
+    if (source.source !== normalizeNonEmptyString(chunk.source, "unknown")) {
+      issues.push(`source_mismatch:${source.chunk_id}`);
+    }
+    if (source.section !== normalizeNonEmptyString(chunk.section, "unknown")) {
+      issues.push(`section_mismatch:${source.chunk_id}`);
+    }
+  }
+
+  for (const quote of normalized.quotes) {
+    if (!quote.chunk_id) {
+      issues.push("quote_chunk_id_missing");
+      continue;
+    }
+    const chunk = chunkMap.get(quote.chunk_id);
+    if (!chunk) {
+      issues.push(`quote_chunk_not_found:${quote.chunk_id}`);
+      continue;
+    }
+    if (quote.source !== normalizeNonEmptyString(chunk.source, "unknown")) {
+      issues.push(`quote_source_mismatch:${quote.chunk_id}`);
+    }
+    if (quote.section !== normalizeNonEmptyString(chunk.section, "unknown")) {
+      issues.push(`quote_section_mismatch:${quote.chunk_id}`);
+    }
+    if (!quote.quote) {
+      issues.push(`quote_text_missing:${quote.chunk_id}`);
+      continue;
+    }
+    if (!String(chunk.text || "").includes(quote.quote)) {
+      issues.push(`quote_not_in_chunk:${quote.chunk_id}`);
+    }
+  }
+
+  return {
+    valid: issues.length === 0,
+    issues,
+    answerResult: normalized,
+  };
+}
+
+export function repairAnswerEvidence(answerResult, retrievedChunks) {
+  const normalized = normalizeAnswerResult(answerResult);
+  const chunks = Array.isArray(retrievedChunks) ? retrievedChunks : [];
+  const chunkMap = buildChunkMap(chunks);
+  const repairedSources = [];
+  const repairedQuotes = [];
+  const sourceIds = new Set();
+  const quoteIds = new Set();
+
+  for (const source of normalized.sources) {
+    const chunk = chunkMap.get(source.chunk_id);
+    if (!chunk || sourceIds.has(source.chunk_id)) continue;
+    repairedSources.push(makeSourceFromChunk(chunk));
+    sourceIds.add(source.chunk_id);
+  }
+
+  for (const quote of normalized.quotes) {
+    const chunk = chunkMap.get(quote.chunk_id);
+    if (!chunk || quoteIds.has(quote.chunk_id)) continue;
+    let quoteText = normalizeNonEmptyString(quote.quote, "");
+    if (!quoteText || !String(chunk.text || "").includes(quoteText)) {
+      quoteText = makeQuoteFromChunk(chunk).quote;
+    }
+    repairedQuotes.push({
+      ...makeSourceFromChunk(chunk),
+      quote: quoteText,
+    });
+    quoteIds.add(quote.chunk_id);
+  }
+
+  const evidenceChunks = pickEvidenceChunks(chunks, 2);
+  const sourceFallbackChunks =
+    repairedQuotes.length > 0
+      ? repairedQuotes
+          .map((item) => chunkMap.get(item.chunk_id))
+          .filter(Boolean)
+      : evidenceChunks;
+
+  for (const chunk of sourceFallbackChunks) {
+    const chunkId = normalizeNonEmptyString(chunk.chunk_id, "");
+    if (!chunkId || sourceIds.has(chunkId)) continue;
+    repairedSources.push(makeSourceFromChunk(chunk));
+    sourceIds.add(chunkId);
+  }
+
+  const quoteFallbackChunks =
+    repairedSources.length > 0
+      ? repairedSources
+          .map((item) => chunkMap.get(item.chunk_id))
+          .filter(Boolean)
+      : evidenceChunks;
+
+  for (const chunk of quoteFallbackChunks) {
+    const chunkId = normalizeNonEmptyString(chunk.chunk_id, "");
+    if (!chunkId || quoteIds.has(chunkId)) continue;
+    repairedQuotes.push(makeQuoteFromChunk(chunk));
+    quoteIds.add(chunkId);
+  }
+
+  return normalizeAnswerResult({
+    ...normalized,
+    sources: repairedSources,
+    quotes: repairedQuotes,
+  });
+}
+
+export function hasSources(answerResult) {
+  return Array.isArray(answerResult && answerResult.sources) && answerResult.sources.length > 0;
+}
+
+export function hasQuotes(answerResult) {
+  return Array.isArray(answerResult && answerResult.quotes) && answerResult.quotes.length > 0;
+}
+
+export function isWeakContext(answerResult) {
+  return Boolean(answerResult && answerResult.weakContext);
+}
+
+export function isConsistentEnough(answerResult, retrievedChunks) {
+  return validateAnswerEvidence(answerResult, retrievedChunks).valid;
 }
 
 function buildRewritePrompt(question) {
@@ -176,6 +494,14 @@ function buildRetrievalConfig(config = {}) {
     topKBefore,
     topKAfter,
     minSimilarity: normalizeFiniteNumber(merged.minSimilarity, DEFAULT_MIN_SIMILARITY),
+    answerMinSimilarity: normalizeFiniteNumber(
+      merged.answerMinSimilarity,
+      DEFAULT_ANSWER_MIN_SIMILARITY,
+    ),
+    forceIDontKnowOnWeakContext: normalizeBoolean(
+      merged.forceIDontKnowOnWeakContext,
+      true,
+    ),
     postProcessingStages: Array.isArray(merged.postProcessingStages)
       ? merged.postProcessingStages.filter((stage) => typeof stage === "function")
       : [],
@@ -296,13 +622,178 @@ export function buildRagContext(chunks) {
     .map((chunk, index) =>
       [
         `[Chunk ${index + 1}]`,
-        `Source: ${chunk.source || "unknown"}`,
-        `Section: ${chunk.section || "unknown"}`,
-        "Text:",
+        `chunk_id: ${chunk.chunk_id || "unknown"}`,
+        `source: ${chunk.source || "unknown"}`,
+        `section: ${chunk.section || "unknown"}`,
+        "text:",
         chunk.text || "",
       ].join("\n"),
     )
     .join("\n\n");
+}
+
+export function buildCitedAnswerPrompt(question, contextText, options = {}) {
+  const clarificationAnswer = normalizeNonEmptyString(
+    options.safeNoDataAnswer,
+    SAFE_NO_DATA_ANSWER,
+  );
+
+  return [
+    "Ответь на вопрос ТОЛЬКО по переданному RAG-контексту.",
+    "Не используй внешние знания и не придумывай факты.",
+    "Нужен обычный короткий ответ на русском, без markdown и без JSON.",
+    "Если ответа нет в контексте, верни ровно эту фразу:",
+    clarificationAnswer,
+    "Не перечисляй источники и не вставляй цитаты в ответ. Это сделает код после генерации.",
+    "",
+    `Вопрос: ${String(question || "").trim()}`,
+    "",
+    "RAG-контекст:",
+    String(contextText || "").trim(),
+    "",
+    "JSON:",
+  ].join("\n");
+}
+
+export async function generateAnswerWithSourcesAndQuotes(
+  question,
+  retrievalResult,
+  config = {},
+) {
+  const diagnostics = evaluateContextStrength(retrievalResult, config);
+  const chunks = Array.isArray(retrievalResult && retrievalResult.chunks)
+    ? retrievalResult.chunks
+    : [];
+
+  if (diagnostics.weakContext && diagnostics.forceIDontKnowOnWeakContext) {
+    return {
+      ...makeSafeAnswerResult(),
+      diagnostics,
+      validation: {
+        valid: true,
+        issues: ["weak_context_gate"],
+      },
+      rawResponseText: "",
+    };
+  }
+
+  const requestCompletion =
+    typeof config.requestCompletion === "function" ? config.requestCompletion : null;
+  if (!requestCompletion) {
+    throw new Error("Не передан requestCompletion для cited answer generation.");
+  }
+
+  const contextText = normalizeNonEmptyString(
+    retrievalResult && retrievalResult.contextText,
+    buildRagContext(chunks),
+  );
+  const prompt = buildCitedAnswerPrompt(question, contextText, config);
+  let rawResponseText = "";
+
+  try {
+    rawResponseText = await requestCompletion(prompt);
+    const sanitizedText = stripMarkdownCodeFences(rawResponseText);
+    const parsed = extractJsonObjectFromText(sanitizedText);
+    const normalized = parsed
+      ? normalizeAnswerResult(parsed, {
+          weakContext: false,
+        })
+      : buildDerivedAnswerResult(sanitizedText, chunks, {
+          needsClarification: false,
+          weakContext: false,
+        });
+    const repaired = repairAnswerEvidence(normalized, chunks);
+    const validation = validateAnswerEvidence(repaired, chunks);
+    if (!validation.valid) {
+      const fallbackFromText = buildDerivedAnswerResult(
+        normalizeNonEmptyString(sanitizedText, SAFE_PARSE_FAILURE_ANSWER),
+        chunks,
+        {
+          needsClarification: false,
+          weakContext: false,
+        },
+      );
+      const fallbackValidation = validateAnswerEvidence(fallbackFromText, chunks);
+      if (fallbackValidation.valid) {
+        return {
+          ...fallbackValidation.answerResult,
+          weakContext: false,
+          diagnostics,
+          validation: fallbackValidation,
+          rawResponseText,
+        };
+      }
+      return {
+        ...makeSafeAnswerResult({
+          answer: SAFE_PARSE_FAILURE_ANSWER,
+        }),
+        diagnostics,
+        validation,
+        rawResponseText,
+      };
+    }
+
+    return {
+      ...repaired,
+      weakContext: false,
+      diagnostics,
+      validation,
+      rawResponseText,
+    };
+  } catch {
+    return {
+      ...makeSafeAnswerResult({
+        answer: SAFE_PARSE_FAILURE_ANSWER,
+      }),
+      diagnostics,
+      validation: {
+        valid: false,
+        issues: ["generation_failed"],
+      },
+      rawResponseText,
+    };
+  }
+}
+
+export function buildAnswerResultFromResponse(answerText, retrievalResult, config = {}) {
+  const diagnostics = evaluateContextStrength(retrievalResult, config);
+  const chunks = Array.isArray(retrievalResult && retrievalResult.chunks)
+    ? retrievalResult.chunks
+    : [];
+  const normalizedAnswer = normalizeNonEmptyString(answerText, SAFE_PARSE_FAILURE_ANSWER);
+  const safeNoDataAnswer = normalizeNonEmptyString(
+    config.safeNoDataAnswer,
+    SAFE_NO_DATA_ANSWER,
+  );
+  const needsClarification =
+    diagnostics.finalChunksCount === 0 ||
+    normalizedAnswer === safeNoDataAnswer ||
+    normalizedAnswer === SAFE_PARSE_FAILURE_ANSWER;
+
+  if (diagnostics.finalChunksCount === 0) {
+    return {
+      ...makeSafeAnswerResult({
+        answer: safeNoDataAnswer,
+      }),
+      diagnostics,
+      validation: {
+        valid: true,
+        issues: ["no_chunks"],
+      },
+    };
+  }
+
+  const result = buildDerivedAnswerResult(normalizedAnswer, chunks, {
+    needsClarification,
+    weakContext: false,
+  });
+  const validation = validateAnswerEvidence(result, chunks);
+
+  return {
+    ...result,
+    diagnostics,
+    validation,
+  };
 }
 
 /**
@@ -522,6 +1013,7 @@ export async function retrieveChunks(question, config = {}) {
     candidatesBeforeFilter,
     chunks,
     contextText: buildRagContext(chunks),
+    diagnostics: buildContextDiagnostics({ chunks }, resolvedConfig),
     configUsed: {
       mode: resolvedConfig.mode,
       indexUrl,
@@ -531,6 +1023,14 @@ export async function retrieveChunks(question, config = {}) {
       topKBefore: resolvedConfig.topKBefore,
       topKAfter: resolvedConfig.topKAfter,
       minSimilarity: resolvedConfig.minSimilarity,
+      answerMinSimilarity: normalizeFiniteNumber(
+        resolvedConfig.answerMinSimilarity,
+        DEFAULT_ANSWER_MIN_SIMILARITY,
+      ),
+      forceIDontKnowOnWeakContext: normalizeBoolean(
+        resolvedConfig.forceIDontKnowOnWeakContext,
+        true,
+      ),
       rewriteEnabled: resolvedConfig.rewriteEnabled,
       filteringEnabled: resolvedConfig.filteringEnabled,
     },
@@ -579,6 +1079,7 @@ export async function compareRagModes(question, baseConfig = {}) {
       contextText: retrieval.contextText,
       chunks: retrieval.chunks,
       candidatesBeforeFilter: retrieval.candidatesBeforeFilter,
+      diagnostics: retrieval.diagnostics,
       debug: retrieval.debug,
     };
   }

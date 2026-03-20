@@ -99,6 +99,56 @@ export function addMessage({ role, text, meta = {} }) {
   textDiv.textContent = text;
   wrap.appendChild(textDiv);
 
+  const answerResult =
+    meta.answerResult && typeof meta.answerResult === "object" ? meta.answerResult : null;
+  if (answerResult) {
+    const evidence = document.createElement("div");
+    evidence.className = "evidence";
+
+    if (answerResult.needsClarification) {
+      const el = document.createElement("span");
+      el.className = "evidence-note";
+      el.textContent = answerResult.weakContext
+        ? "Недостаточно контекста, нужен уточняющий вопрос."
+        : "Нужно уточнение.";
+      evidence.appendChild(el);
+    }
+
+    const sources = Array.isArray(answerResult.sources) ? answerResult.sources : [];
+    if (sources.length > 0) {
+      const sourcesTitle = document.createElement("div");
+      sourcesTitle.className = "evidence-title";
+      sourcesTitle.textContent = "Источники:";
+      evidence.appendChild(sourcesTitle);
+      for (const source of sources) {
+        const el = document.createElement("div");
+        el.className = "evidence-item";
+        el.textContent = `${source.source || "unknown"} | ${source.section || "unknown"} | ${
+          source.chunk_id || "unknown"
+        }`;
+        evidence.appendChild(el);
+      }
+    }
+
+    const quotes = Array.isArray(answerResult.quotes) ? answerResult.quotes : [];
+    if (quotes.length > 0) {
+      const quotesTitle = document.createElement("div");
+      quotesTitle.className = "evidence-title";
+      quotesTitle.textContent = "Цитаты:";
+      evidence.appendChild(quotesTitle);
+      for (const quote of quotes) {
+        const el = document.createElement("div");
+        el.className = "evidence-item";
+        el.textContent = `[${quote.chunk_id || "unknown"}] "${quote.quote || ""}"`;
+        evidence.appendChild(el);
+      }
+    }
+
+    if (evidence.childElementCount > 0) {
+      wrap.appendChild(evidence);
+    }
+  }
+
   const statsLines = meta.statsLines || [];
   if (statsLines.length > 0) {
     const stats = document.createElement("div");
@@ -165,7 +215,16 @@ export function renderHistory(
     const m = history[idx];
     const time = m.at ? formatTimeFromISO(m.at) : formatTime();
     const statsLines = messageStatsLines(m);
-    addMessage({ role: m.role, text: m.text, meta: { time, statsLines } });
+    addMessage({
+      role: m.role,
+      text: m.text,
+      meta: {
+        time,
+        statsLines,
+        answerResult:
+          m.answerResult && typeof m.answerResult === "object" ? m.answerResult : null,
+      },
+    });
   }
 
   renderTotalsBar(globalTotals);
@@ -322,6 +381,10 @@ export function renderRagPanel(ragResult) {
       : {};
   const debug =
     result.debug && typeof result.debug === "object" ? result.debug : {};
+  const diagnostics =
+    result.diagnostics && typeof result.diagnostics === "object" ? result.diagnostics : {};
+  const answerResult =
+    result.answerResult && typeof result.answerResult === "object" ? result.answerResult : null;
   const filteringMeta =
     debug.filteringMeta && typeof debug.filteringMeta === "object"
       ? debug.filteringMeta
@@ -347,6 +410,22 @@ export function renderRagPanel(ragResult) {
     `<div class="rag-meta-item"><span>Чанков после отбора</span><strong>${
       chunks.length
     }</strong></div>`,
+    `<div class="rag-meta-item"><span>Max similarity</span><strong>${
+      Number.isFinite(diagnostics.maxSimilarity)
+        ? diagnostics.maxSimilarity.toFixed(4)
+        : "—"
+    }</strong></div>`,
+    `<div class="rag-meta-item"><span>Average similarity</span><strong>${
+      Number.isFinite(diagnostics.averageSimilarity)
+        ? diagnostics.averageSimilarity.toFixed(4)
+        : "—"
+    }</strong></div>`,
+    `<div class="rag-meta-item"><span>Weak context</span><strong>${
+      answerResult && answerResult.weakContext ? "Да" : "Нет"
+    }</strong></div>`,
+    `<div class="rag-meta-item"><span>Needs clarification</span><strong>${
+      answerResult && answerResult.needsClarification ? "Да" : "Нет"
+    }</strong></div>`,
     `<div class="rag-meta-item"><span>Threshold</span><strong>${
       filteringMeta && Number.isFinite(filteringMeta.threshold)
         ? filteringMeta.threshold.toFixed(2)
@@ -364,6 +443,7 @@ export function renderRagPanel(ragResult) {
       (chunk, index) => `
         <article class="rag-chunk">
           <div class="rag-chunk-row"><strong>Rank:</strong> ${index + 1}</div>
+          <div class="rag-chunk-row"><strong>Chunk:</strong> ${escapeHtml(chunk.chunk_id || "unknown")}</div>
           <div class="rag-chunk-row"><strong>Similarity:</strong> ${
             Number.isFinite(chunk.similarity) ? chunk.similarity.toFixed(4) : "n/a"
           }</div>
