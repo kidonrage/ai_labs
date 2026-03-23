@@ -8,6 +8,33 @@
   </head>
   <body>
     <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <div class="sidebar-title">Чаты</div>
+          <div class="sidebar-subtitle">Все диалоги в одном месте</div>
+        </div>
+
+        <div id="chatList" class="chat-list" aria-label="Список чатов"></div>
+
+        <div class="sidebar-actions">
+          <button id="newChat" class="btn secondary" type="button">
+            Новый чат
+          </button>
+
+          <button id="branchChat" class="btn secondary" type="button">
+            Новый из текущего
+          </button>
+
+          <button id="renameChat" class="btn secondary" type="button">
+            Переименовать
+          </button>
+
+          <button id="deleteChat" class="btn danger" type="button">
+            Удалить чат
+          </button>
+        </div>
+      </aside>
+
       <header class="topbar">
         <div class="title">
           <div>
@@ -78,30 +105,9 @@
             <select id="ragRetrievalMode"></select>
           </label>
 
-          <label class="field">
-            <span>Чаты</span>
-            <select id="chatSelect"></select>
-          </label>
-
           </div>
 
           <div class="controls-actions">
-          <button id="newChat" class="btn secondary" type="button">
-            Новый чат
-          </button>
-
-          <button id="branchChat" class="btn secondary" type="button">
-            Новый из текущего
-          </button>
-
-          <button id="renameChat" class="btn secondary" type="button">
-            Переименовать
-          </button>
-
-          <button id="deleteChat" class="btn danger" type="button">
-            Удалить чат
-          </button>
-
           <button id="runRagBatch" class="btn secondary" type="button">
             Экспорт тестов RAG в Markdown
           </button>

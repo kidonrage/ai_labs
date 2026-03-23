@@ -4,7 +4,7 @@ class BusyStateView {
   setBusy(isBusy) {
     const ids = [
       "send", "newChat", "branchChat", "profileMenuCreate", "renameChat", "deleteChat",
-      "chatSelect", "profileMenuTrigger", "input", "model", "temperature", "baseUrl",
+      "profileMenuTrigger", "input", "model", "temperature", "baseUrl",
       "ragEnabled", "ragRetrievalMode", "pauseTask", "continueTask", "invariantSelect",
       "addInvariant", "removeInvariant", "runRagBatch",
     ];
@@ -13,6 +13,9 @@ class BusyStateView {
       if (el) el.disabled = isBusy;
     }
     for (const button of document.querySelectorAll("[data-profile-action]")) {
+      if (button instanceof HTMLButtonElement) button.disabled = isBusy;
+    }
+    for (const button of document.querySelectorAll("[data-chat-action]")) {
       if (button instanceof HTMLButtonElement) button.disabled = isBusy;
     }
     if ($("send")) $("send").textContent = isBusy ? "Sending…" : "Send";

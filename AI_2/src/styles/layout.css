@@ -22,21 +22,49 @@ body {
 }
 
 .app {
-  max-width: 1360px;
+  max-width: 1480px;
   margin: 0 auto;
-  height: 100%;
+  min-height: 100vh;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "sidebar topbar"
+    "sidebar chat"
+    "sidebar composer";
   gap: 14px;
   padding: 14px;
 }
 
+.sidebar,
 .chat,
 .composer,
 .topbar {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+}
+
+.sidebar {
+  grid-area: sidebar;
+  position: sticky;
+  top: 14px;
+  align-self: start;
+  height: calc(100vh - 28px);
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+  padding: 16px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  overflow: hidden;
+}
+
+.chat {
+  grid-area: chat;
+}
+
+.topbar {
+  grid-area: topbar;
 }
 
 .chat {
@@ -47,6 +75,7 @@ body {
 }
 
 .composer {
+  grid-area: composer;
   display: grid;
   grid-template-columns: 1fr 120px;
   grid-template-areas: "totals totals" "input send";
@@ -107,6 +136,21 @@ body {
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
 @media (max-width: 760px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "sidebar"
+      "topbar"
+      "chat"
+      "composer";
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+  }
+
   .composer {
     grid-template-columns: 1fr;
     grid-template-areas: "totals" "input" "send";

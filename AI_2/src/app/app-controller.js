@@ -8,7 +8,7 @@ import { ProfileRegistry } from "./profile-registry.js";
 import { promptInvariantDraft, promptProfileDraft } from "./prompts.js";
 import { buildRagConfigFromUi, populateRagModeSelect } from "./rag-config.js";
 import { RagBatchController } from "./rag-batch-controller.js";
-import { renderChatSelector, renderInvariantControls, renderProfileMenu } from "./ui-renderers.js";
+import { renderChatList, renderInvariantControls, renderProfileMenu } from "./ui-renderers.js";
 import { $, clonePlain } from "./utils.js";
 import { WorkspaceStore } from "./workspace-store.js";
 
@@ -56,7 +56,7 @@ class AppController {
   setBatchRunning(value) { this.isBatchRunning = value; setBusy(this.isUiBusy()); }
 
   renderWorkspaceChrome() {
-    renderChatSelector(this.workspace.store.chats, this.workspace.store.activeChatId);
+    renderChatList(this.workspace.store.chats, this.workspace.store.activeChatId);
     renderProfileMenu(this.workspace.store.profiles, this.workspace.store.activeProfileId);
     renderInvariantControls(this.session.agent);
     this.workspace.persist();
@@ -101,7 +101,17 @@ class AppController {
     $("renameChat").addEventListener("click", () => { const chat = this.workspace.getActiveChat(); const value = window.prompt("Новое имя чата:", chat?.title || ""); if (value != null && value.trim()) { this.workspace.renameActiveChat(value.trim().slice(0, 60)); this.renderWorkspaceChrome(); } else if (value != null) window.alert("Имя чата не может быть пустым."); });
     $("deleteChat").addEventListener("click", () => { if (this.workspace.deleteActiveChat()) { this.renderWorkspaceChrome(); this.session.bindAgentToActiveChat(); } });
     $("runRagBatch").addEventListener("click", () => this.ragBatch.handleRun());
-    $("chatSelect").addEventListener("change", (e) => { this.workspace.switchChat(e.target.value); this.renderWorkspaceChrome(); this.session.bindAgentToActiveChat(); });
+    $("chatList").addEventListener("click", (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      const chatButton = target.closest("[data-chat-action='select']");
+      if (!(chatButton instanceof HTMLButtonElement)) return;
+      const { chatId } = chatButton.dataset;
+      if (!chatId) return;
+      this.workspace.switchChat(chatId);
+      this.renderWorkspaceChrome();
+      this.session.bindAgentToActiveChat();
+    });
     $("ragEnabled").addEventListener("change", () => this.session.agent?.setRagConfig(buildRagConfigFromUi(this.session.agent.ragConfig)));
     $("ragRetrievalMode").addEventListener("change", () => this.session.agent?.setRagConfig(buildRagConfigFromUi(this.session.agent.ragConfig)));
     $("profileMenuCreate").addEventListener("click", () => this.handleCreateProfile());

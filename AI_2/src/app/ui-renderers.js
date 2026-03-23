@@ -1,15 +1,42 @@
 import { $ } from "./utils.js";
 
-function renderChatSelector(chats, activeChatId) {
-  const select = $("chatSelect");
-  select.innerHTML = "";
+function makeChatSubtitle(chat) {
+  const activeBranch =
+    chat &&
+    chat.branching &&
+    Array.isArray(chat.branching.branches)
+      ? chat.branching.branches.find((branch) => branch.id === chat.branching.activeBranchId) ||
+        chat.branching.branches[0]
+      : null;
+  const state =
+    activeBranch && activeBranch.state && typeof activeBranch.state === "object"
+      ? activeBranch.state
+      : chat && chat.state && typeof chat.state === "object"
+        ? chat.state
+        : {};
+  const history = Array.isArray(state.history) ? state.history : [];
+  const lastMessage = history.length > 0 ? history[history.length - 1] : null;
+  const raw = lastMessage && typeof lastMessage.text === "string" ? lastMessage.text.trim() : "";
+  if (!raw) return "Чат пуст";
+  return raw.replace(/\s+/g, " ");
+}
+
+function renderChatList(chats, activeChatId) {
+  const list = $("chatList");
+  if (!list) return;
+  list.innerHTML = "";
   for (const chat of chats) {
-    const option = document.createElement("option");
-    option.value = chat.id;
-    option.textContent = chat.title;
-    select.appendChild(option);
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `chat-list-item${chat.id === activeChatId ? " active" : ""}`;
+    item.dataset.chatId = chat.id;
+    item.dataset.chatAction = "select";
+    item.innerHTML = `
+      <span class="chat-list-title">${chat.title}</span>
+      <span class="chat-list-subtitle">${makeChatSubtitle(chat)}</span>
+    `;
+    list.appendChild(item);
   }
-  select.value = activeChatId;
   $("deleteChat").disabled = chats.length <= 1;
 }
 
@@ -61,4 +88,4 @@ function setBatchRunStatus(text, tone = "idle") {
   if (tone === "success") el.classList.add("is-success");
 }
 
-export { renderChatSelector, renderInvariantControls, renderProfileMenu, setBatchRunStatus };
+export { renderChatList, renderInvariantControls, renderProfileMenu, setBatchRunStatus };
