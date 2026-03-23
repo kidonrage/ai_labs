@@ -54,6 +54,20 @@ class AppController {
   isUiBusy() { return this.isSending || this.isBatchRunning; }
   setSending(value) { this.isSending = value; setBusy(this.isUiBusy()); }
   setBatchRunning(value) { this.isBatchRunning = value; setBusy(this.isUiBusy()); }
+  openSettingsDialog() {
+    const dialog = $("settingsDialog");
+    if (!dialog) return;
+    if (typeof dialog.showModal === "function" && !dialog.open) dialog.showModal();
+    else dialog.setAttribute("open", "");
+  }
+
+  closeSettingsDialog() {
+    const dialog = $("settingsDialog");
+    if (!dialog) return;
+    if (typeof dialog.close === "function" && dialog.open) dialog.close();
+    else dialog.removeAttribute("open");
+    if ($("profileMenu")) $("profileMenu").open = false;
+  }
 
   renderWorkspaceChrome() {
     renderChatList(this.workspace.store.chats, this.workspace.store.activeChatId);
@@ -100,6 +114,10 @@ class AppController {
     $("branchChat").addEventListener("click", () => { const sourceBranch = this.workspace.getActiveBranch(); const sourceState = sourceBranch?.state ? clonePlain(sourceBranch.state) : clonePlain(this.session.agent?.exportState() || this.workspace.getActiveChat()?.state || {}); this.workspace.cloneChatFromCurrent(sourceState); this.renderWorkspaceChrome(); this.session.bindAgentToActiveChat(); addMessage({ role: "assistant", text: "Создан новый чат на основе текущего. Дальше они независимы.", meta: { statsLines: [] } }); });
     $("renameChat").addEventListener("click", () => { const chat = this.workspace.getActiveChat(); const value = window.prompt("Новое имя чата:", chat?.title || ""); if (value != null && value.trim()) { this.workspace.renameActiveChat(value.trim().slice(0, 60)); this.renderWorkspaceChrome(); } else if (value != null) window.alert("Имя чата не может быть пустым."); });
     $("deleteChat").addEventListener("click", () => { if (this.workspace.deleteActiveChat()) { this.renderWorkspaceChrome(); this.session.bindAgentToActiveChat(); } });
+    $("openSettings").addEventListener("click", () => this.openSettingsDialog());
+    $("closeSettings").addEventListener("click", () => this.closeSettingsDialog());
+    $("settingsDialog").addEventListener("cancel", () => { if ($("profileMenu")) $("profileMenu").open = false; });
+    $("settingsDialog").addEventListener("click", (e) => { if (e.target === $("settingsDialog")) this.closeSettingsDialog(); });
     $("runRagBatch").addEventListener("click", () => this.ragBatch.handleRun());
     $("chatList").addEventListener("click", (e) => {
       const target = e.target;

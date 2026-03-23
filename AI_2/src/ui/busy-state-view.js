@@ -4,7 +4,7 @@ class BusyStateView {
   setBusy(isBusy) {
     const ids = [
       "send", "newChat", "branchChat", "profileMenuCreate", "renameChat", "deleteChat",
-      "profileMenuTrigger", "input", "model", "temperature", "baseUrl",
+      "profileMenuTrigger", "openSettings", "input", "model", "temperature", "baseUrl",
       "ragEnabled", "ragRetrievalMode", "pauseTask", "continueTask", "invariantSelect",
       "addInvariant", "removeInvariant", "runRagBatch",
     ];

@@ -36,86 +36,125 @@
       </aside>
 
       <header class="topbar">
-        <div class="title">
-          <div>
+        <div class="topbar-head">
+          <div class="title">
             <div class="h1">Simple Agent Chat</div>
             <div class="h2">HTML • CSS • JS (modules)</div>
           </div>
+          <div class="topbar-actions">
+            <button
+              id="openSettings"
+              class="btn secondary settings-trigger"
+              type="button"
+              aria-haspopup="dialog"
+              aria-controls="settingsDialog"
+            >
+              <span class="gear-icon" aria-hidden="true"></span>
+              <span>Настройки чата</span>
+            </button>
 
-          <details id="profileMenu" class="profile-menu">
-            <summary id="profileMenuTrigger">Профиль</summary>
-            <div class="profile-menu-panel">
-              <div id="profileMenuList" class="profile-menu-list"></div>
-              <button id="profileMenuCreate" class="btn secondary" type="button">
-                Создать новый профиль
-              </button>
-            </div>
-          </details>
+            <button id="runRagBatch" class="btn secondary" type="button">
+              Экспорт тестов RAG в Markdown
+            </button>
+          </div>
         </div>
 
-        <div class="controls">
-          <div class="controls-fields">
-          <label class="field">
-            <span>API</span>
-            <select id="apiMode">
-              <option value="proxyapi_responses">ProxyAPI Responses</option>
-              <option value="ollama_chat">Ollama Chat</option>
-              <option value="ollama_tools_chat">Ollama + MCP</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>API URL</span>
-            <input id="baseUrl" type="text" value="https://api.proxyapi.ru/openai/v1/responses" />
-          </label>
-
-          <label class="field">
-            <span>Model</span>
-            <select id="model">
-              <option value="gpt-4.1">gpt-4.1</option>
-              <option value="gpt-5.2">gpt-5.2</option>
-              <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-              <option value="gemma3">gemma3</option>
-              <option value="qwen3:8b">qwen3:8b</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Temperature</span>
-            <input
-              id="temperature"
-              type="number"
-              min="0"
-              max="2"
-              step="0.1"
-              value="0.7"
-            />
-          </label>
-
-          <label class="field">
-            <span>RAG</span>
-            <select id="ragEnabled">
-              <option value="off">Без RAG</option>
-              <option value="on">С RAG</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Режим RAG</span>
-            <select id="ragRetrievalMode"></select>
-          </label>
-
-          </div>
-
-          <div class="controls-actions">
-          <button id="runRagBatch" class="btn secondary" type="button">
-            Экспорт тестов RAG в Markdown
-          </button>
-          </div>
-
-          <div id="batchRunStatus" class="batch-run-status" aria-live="polite" hidden></div>
-        </div>
+        <div id="batchRunStatus" class="batch-run-status" aria-live="polite" hidden></div>
       </header>
+
+      <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsDialogTitle">
+        <div class="settings-dialog-card">
+          <div class="settings-dialog-head">
+            <div>
+              <div id="settingsDialogTitle" class="settings-dialog-title">Настройки чата</div>
+              <div class="settings-dialog-subtitle">
+                Параметры применяются к активному чату.
+              </div>
+            </div>
+
+            <button
+              id="closeSettings"
+              class="btn secondary settings-close"
+              type="button"
+              aria-label="Закрыть окно настроек"
+            >
+              Закрыть
+            </button>
+          </div>
+
+          <div class="settings-dialog-body">
+            <div class="controls-fields">
+              <label class="field">
+                <span>API</span>
+                <select id="apiMode">
+                  <option value="proxyapi_responses">ProxyAPI Responses</option>
+                  <option value="ollama_chat">Ollama Chat</option>
+                  <option value="ollama_tools_chat">Ollama + MCP</option>
+                </select>
+              </label>
+
+              <label class="field field-wide">
+                <span>API URL</span>
+                <input
+                  id="baseUrl"
+                  type="text"
+                  value="https://api.proxyapi.ru/openai/v1/responses"
+                />
+              </label>
+
+              <label class="field">
+                <span>Model</span>
+                <select id="model">
+                  <option value="gpt-4.1">gpt-4.1</option>
+                  <option value="gpt-5.2">gpt-5.2</option>
+                  <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+                  <option value="gemma3">gemma3</option>
+                  <option value="qwen3:8b">qwen3:8b</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Temperature</span>
+                <input
+                  id="temperature"
+                  type="number"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  value="0.7"
+                />
+              </label>
+
+              <label class="field">
+                <span>RAG</span>
+                <select id="ragEnabled">
+                  <option value="off">Без RAG</option>
+                  <option value="on">С RAG</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Режим RAG</span>
+                <select id="ragRetrievalMode"></select>
+              </label>
+            </div>
+
+            <section class="settings-section">
+              <div class="settings-section-title">Профиль</div>
+
+              <details id="profileMenu" class="profile-menu profile-menu-inline">
+                <summary id="profileMenuTrigger">Профиль</summary>
+                <div class="profile-menu-panel">
+                  <div id="profileMenuList" class="profile-menu-list"></div>
+                  <button id="profileMenuCreate" class="btn secondary" type="button">
+                    Создать новый профиль
+                  </button>
+                </div>
+              </details>
+            </section>
+          </div>
+        </div>
+      </dialog>
 
       <main class="chat">
         <details id="factsPanel" class="facts-panel" hidden>
