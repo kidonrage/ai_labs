@@ -1,109 +1,31 @@
+import {
+  allowedTransitions,
+  isForwardTaskTransition,
+  makeDefaultTaskState,
+  nextStageFor,
+  normalizeTaskState,
+} from "./task-stage-state.js";
+import { buildTaskFinalizationInput, buildTaskStepInput } from "./task-stage-prompts.js";
+
 class TaskStageWorkflow {
   static allowedTransitions() {
-    return {
-      idle: new Set(["planning"]),
-      planning: new Set(["execution", "paused"]),
-      execution: new Set(["validation", "paused"]),
-      validation: new Set(["done", "paused"]),
-      paused: new Set(["planning", "execution", "validation"]),
-      done: new Set([]),
-    };
+    return allowedTransitions();
   }
 
   static _isForwardTaskTransition(fromStage, toStage) {
-    return (
-      (fromStage === "planning" && toStage === "execution") ||
-      (fromStage === "execution" && toStage === "validation") ||
-      (fromStage === "validation" && toStage === "done")
-    );
+    return isForwardTaskTransition(fromStage, toStage);
   }
 
   static _nextStageFor(stage) {
-    if (stage === "planning") return "execution";
-    if (stage === "execution") return "validation";
-    if (stage === "validation") return "done";
-    return null;
+    return nextStageFor(stage);
   }
 
   static makeDefaultTaskState() {
-    return {
-      stage: "idle",
-      step: 0,
-      expectedAction: null,
-      advanceApprovedFromStage: null,
-      pausedFrom: null,
-      artifacts: {
-        userGoal: null,
-        plan: null,
-        draft: null,
-        validation: null,
-      },
-    };
+    return makeDefaultTaskState();
   }
 
   static normalizeTaskState(value) {
-    const base = TaskStageWorkflow.makeDefaultTaskState();
-    const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-    const allowedStages = new Set([
-      "idle",
-      "planning",
-      "execution",
-      "validation",
-      "done",
-      "paused",
-    ]);
-
-    const stage = typeof raw.stage === "string" && allowedStages.has(raw.stage)
-      ? raw.stage
-      : base.stage;
-    const step = Number.isFinite(raw.step) ? Math.max(0, Math.floor(raw.step)) : base.step;
-    const expectedAction = typeof raw.expectedAction === "string" && raw.expectedAction.trim()
-      ? raw.expectedAction.trim()
-      : null;
-    const advanceApprovedFromStage =
-      typeof raw.advanceApprovedFromStage === "string" && raw.advanceApprovedFromStage.trim()
-        ? raw.advanceApprovedFromStage.trim()
-        : null;
-
-    const pausedFromRaw = raw.pausedFrom && typeof raw.pausedFrom === "object" && !Array.isArray(raw.pausedFrom)
-      ? raw.pausedFrom
-      : null;
-    const pausedFrom = pausedFromRaw && typeof pausedFromRaw.stage === "string" && Number.isFinite(pausedFromRaw.step)
-      ? {
-          stage: pausedFromRaw.stage,
-          step: Math.max(0, Math.floor(pausedFromRaw.step)),
-          expectedAction:
-            typeof pausedFromRaw.expectedAction === "string" &&
-            pausedFromRaw.expectedAction.trim()
-              ? pausedFromRaw.expectedAction.trim()
-              : null,
-          advanceApprovedFromStage:
-            typeof pausedFromRaw.advanceApprovedFromStage === "string" &&
-            pausedFromRaw.advanceApprovedFromStage.trim()
-              ? pausedFromRaw.advanceApprovedFromStage.trim()
-              : null,
-        }
-      : null;
-
-    const artifactsRaw = raw.artifacts && typeof raw.artifacts === "object" && !Array.isArray(raw.artifacts)
-      ? raw.artifacts
-      : {};
-    const normalizeArtifact = (v) =>
-      typeof v === "string" && v.trim() ? v.trim() : null;
-
-    return {
-      stage,
-      step,
-      expectedAction,
-      advanceApprovedFromStage,
-      pausedFrom,
-      artifacts: {
-        userGoal: normalizeArtifact(artifactsRaw.userGoal),
-        plan: normalizeArtifact(artifactsRaw.plan),
-        draft: normalizeArtifact(artifactsRaw.draft),
-        validation: normalizeArtifact(artifactsRaw.validation),
-      },
-    };
+    return normalizeTaskState(value);
   }
 
   constructor({
@@ -276,65 +198,6 @@ class TaskStageWorkflow {
     return this.transitionTo(nextStage, this._expectedActionForStage(nextStage));
   }
 
-  _buildTaskStepInput(stage, context = {}) {
-    const ts = this._state();
-    const artifacts = ts.artifacts || {};
-    const userHint = typeof context.userMessage === "string" ? context.userMessage.trim() : "";
-    const instructionByStage = {
-      planning:
-        "Сформируй короткий план (outline) по цели пользователя. Верни только план, без вступлений.",
-      execution:
-        "На основе цели и плана создай черновик результата. Используй уже сохранённые артефакты, не повторяй лишних объяснений.",
-      validation:
-        "Сделай проверку/ревью черновика: кратко укажи сильные стороны, риски и список правок.",
-    };
-
-    const parts = [];
-    parts.push("SYSTEM: Ты выполняешь шаг конечного автомата задачи.");
-    parts.push("Межэтапный переход выполняется только после явной команды пользователя approve.");
-    parts.push(`STAGE: ${stage}`);
-    parts.push(`STEP: ${ts.step}`);
-    parts.push(`EXPECTED_ACTION: ${ts.expectedAction || "null"}`);
-    parts.push(`GOAL: ${artifacts.userGoal || "(empty)"}`);
-    parts.push(`PLAN: ${artifacts.plan || "(empty)"}`);
-    parts.push(`DRAFT: ${artifacts.draft || "(empty)"}`);
-    parts.push(`VALIDATION: ${artifacts.validation || "(empty)"}`);
-    parts.push("INVARIANTS:");
-    parts.push(JSON.stringify(this.getInvariants(), null, 2));
-    if (userHint) {
-      parts.push(`USER_HINT: ${userHint}`);
-    }
-    parts.push(`INSTRUCTION: ${instructionByStage[stage] || "Сделай следующий шаг задачи."}`);
-    parts.push("ASSISTANT:");
-    return parts.join("\n");
-  }
-
-  _buildTaskFinalizationInput(context = {}, validationText = "") {
-    const ts = this._state();
-    const artifacts = ts.artifacts || {};
-    const userRemarks =
-      typeof context.userMessage === "string" && context.userMessage.trim()
-        ? context.userMessage.trim()
-        : "";
-
-    const parts = [];
-    parts.push("SYSTEM: Ты завершаешь задачу после этапа validation.");
-    parts.push("Собери финальный результат, исправив черновик с учетом замечаний.");
-    parts.push("Верни СТРОГО JSON без markdown и без пояснений:");
-    parts.push('{"final":"<готовый финальный результат>"}');
-    parts.push("Запрещено возвращать review, комментарии и списки замечаний.");
-    parts.push(`GOAL: ${artifacts.userGoal || "(empty)"}`);
-    parts.push(`PLAN: ${artifacts.plan || "(empty)"}`);
-    parts.push(`DRAFT_BEFORE_FIX: ${artifacts.draft || "(empty)"}`);
-    parts.push(`VALIDATION_REVIEW: ${validationText || "(empty)"}`);
-    parts.push("INVARIANTS:");
-    parts.push(JSON.stringify(this.getInvariants(), null, 2));
-    parts.push(`USER_REMARKS: ${userRemarks || "(empty)"}`);
-    parts.push("INSTRUCTION: Верни только поле final с итоговым текстом.");
-    parts.push("ASSISTANT:");
-    return parts.join("\n");
-  }
-
   async runTaskStep(context = {}) {
     const state = this._state();
     const stage = state.stage;
@@ -359,7 +222,7 @@ class TaskStageWorkflow {
     }
 
     const answerText = await this.runTaskLLMStep(
-      this._buildTaskStepInput(stage, context),
+      buildTaskStepInput(this._state(), this.getInvariants(), stage, context),
     );
 
     const next = this._state();
@@ -383,7 +246,7 @@ class TaskStageWorkflow {
     }
 
     const finalRawText = await this.runTaskLLMStep(
-      this._buildTaskFinalizationInput(context, answerText),
+      buildTaskFinalizationInput(this._state(), this.getInvariants(), context, answerText),
     );
     let finalText = String(finalRawText || "").trim();
     const parsedFinal = this.extractJsonObject(finalRawText);
