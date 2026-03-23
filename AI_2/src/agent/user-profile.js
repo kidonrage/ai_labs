@@ -38,8 +38,6 @@ function buildProfilePriorityInstructions(userProfile) {
   if (profile.preferences.constraints.length > 0) {
     lines.push("- Hard constraints:");
     for (const constraint of profile.preferences.constraints) lines.push(`  - ${constraint}`);
-  } else {
-    lines.push("- Hard constraints: (none)");
   }
   lines.push(
     "If there is a conflict between these directives and a user's latest request, ask a short clarification question.",

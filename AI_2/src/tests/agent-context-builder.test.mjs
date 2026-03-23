@@ -27,6 +27,7 @@ async function main() {
   ]);
   assert.equal(proxyContract.userMessage, "второй");
   assert.equal(proxyContract.systemDirectives.filter((item) => /PROFILE DIRECTIVES/.test(item)).length, 1);
+  assert.equal(proxyContract.systemDirectives.some((item) => /Hard constraints: \(none\)/.test(item)), false);
 
   const proxyInput = await proxyAgent._buildContextInput("второй", {
     draftPlan: { summary: "plan" },
@@ -91,6 +92,7 @@ async function main() {
   assert.match(messages[0].content, /PROFILE DIRECTIVES/);
   assert.match(messages[0].content, /Только по контексту/);
   assert.doesNotMatch(messages[0].content, /FINAL RESPONDER PROMPT:/);
+  assert.doesNotMatch(messages[0].content, /Hard constraints: \(none\)/);
   assert.doesNotMatch(messages[0].content, /approve/);
   assert.match(messages[1].content, /RETRIEVED CONTEXT:/);
   assert.match(messages[1].content, /USER REQUEST:/);
