@@ -1,6 +1,6 @@
 import { API_MODES, requiresAuthorization } from "../api-profiles.js";
+import { extractJsonObject } from "../json-extraction.js";
 import { OpenAIModelPricing } from "../pricing.js";
-import { extractJsonObject } from "./json.js";
 import { applyMemoryWritePatch, extractMemoryWritePatch } from "./memory-patcher.js";
 
 class MemoryUpdateService {

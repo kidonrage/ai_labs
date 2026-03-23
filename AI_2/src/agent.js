@@ -9,7 +9,7 @@ import {
   extractUserVisibleAnswer,
 } from "./agent/answer-extractors.js";
 import { InvariantGuard } from "./agent/invariant-guard.js";
-import { extractJsonObject } from "./agent/json.js";
+import { extractJsonObject } from "./json-extraction.js";
 import { MemoryUpdateService } from "./agent/memory-update-service.js";
 import { ModelGateway } from "./agent/model-gateway.js";
 import { RagAnswerService } from "./agent/rag-answer-service.js";
