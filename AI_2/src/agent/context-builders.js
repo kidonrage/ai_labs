@@ -11,69 +11,124 @@ function buildCompactUserMessages(history, nextUserText) {
   return messages;
 }
 
+function makeBlock(title, value) {
+  return { title, value: String(value || "").trim() };
+}
+
+function pushJsonBlock(blocks, title, value) {
+  if (value == null) return;
+  blocks.push(makeBlock(title, JSON.stringify(value, null, 2)));
+}
+
+function pushTextBlock(blocks, title, value) {
+  const text = String(value || "").trim();
+  if (!text) return;
+  blocks.push(makeBlock(title, text));
+}
+
+function buildInvariantPolicy(invariants) {
+  const count = Array.isArray(invariants) ? invariants.length : 0;
+  return count > 0
+    ? `Соблюдай активные инварианты системы. Их ${count}. Если запрос противоречит им, не выходи за их рамки в ответе.`
+    : "Соблюдай системные ограничения, если они присутствуют в контексте.";
+}
+
+function buildPromptContract(agent, nextUserText, runtimeContext = null) {
+  const keepLast = Math.max(1, Number(agent.contextPolicy.keepLastMessages) || 12);
+  const tail = agent.history.slice(-keepLast);
+  const userRequest = String(
+    runtimeContext?.rag?.question || nextUserText || "",
+  ).trim();
+  const contextBlocks = [];
+
+  pushJsonBlock(contextBlocks, "ACTIVE USER PROFILE", agent.userProfile);
+  pushJsonBlock(contextBlocks, "ACTIVE INVARIANTS", agent.invariants);
+  pushJsonBlock(contextBlocks, "LONG-TERM MEMORY", agent.longTermMemory);
+  pushJsonBlock(contextBlocks, "WORKING MEMORY", agent.workingMemory);
+  pushJsonBlock(contextBlocks, "TASK STATE", agent.taskState);
+  pushJsonBlock(contextBlocks, "SHORT-TERM MEMORY", {
+    messages: tail.map((item) => ({
+      role: item.role,
+      content: String(item.text || ""),
+    })),
+  });
+  pushJsonBlock(contextBlocks, "USER MESSAGE HISTORY", buildCompactUserMessages(agent.history, userRequest));
+  if (runtimeContext?.draftPlan) {
+    pushJsonBlock(contextBlocks, "DRAFT PLAN", runtimeContext.draftPlan);
+  }
+  if (runtimeContext?.invariantCheck?.conflict) {
+    pushJsonBlock(contextBlocks, "INVARIANT CHECK RESULT", runtimeContext.invariantCheck);
+  }
+  if (runtimeContext?.rag?.contextText?.trim()) {
+    pushTextBlock(contextBlocks, "RETRIEVED CONTEXT", runtimeContext.rag.contextText);
+  }
+
+  const systemDirectives = [
+    String(agent.systemPreamble || "").trim(),
+    buildProfilePriorityInstructions(agent.userProfile),
+    buildInvariantPolicy(agent.invariants),
+  ].filter(Boolean);
+
+  if (runtimeContext?.rag?.answerPolicy) {
+    systemDirectives.push(String(runtimeContext.rag.answerPolicy).trim());
+  }
+
+  return {
+    systemDirectives,
+    contextBlocks,
+    userMessage: userRequest,
+  };
+}
+
+function compileContextBlocks(blocks) {
+  const parts = [];
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    if (!block || typeof block !== "object") continue;
+    const title = String(block.title || "").trim();
+    const value = String(block.value || "").trim();
+    if (!title || !value) continue;
+    parts.push(`${title}:`, value);
+  }
+  return parts.join("\n\n");
+}
+
+function compilePromptInput(contract) {
+  const systemText = (Array.isArray(contract?.systemDirectives) ? contract.systemDirectives : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const contextText = compileContextBlocks(contract?.contextBlocks);
+  const parts = [];
+  if (systemText) parts.push("SYSTEM DIRECTIVES:", systemText);
+  if (contextText) parts.push("CONTEXT:", contextText);
+  parts.push("USER REQUEST:", String(contract?.userMessage || "").trim(), "ASSISTANT:");
+  return parts.join("\n\n");
+}
+
+function compilePromptMessages(contract) {
+  const systemText = (Array.isArray(contract?.systemDirectives) ? contract.systemDirectives : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const contextText = compileContextBlocks(contract?.contextBlocks);
+  const userParts = [];
+  if (contextText) userParts.push("CONTEXT:", contextText);
+  userParts.push("USER REQUEST:", String(contract?.userMessage || "").trim());
+  return [
+    { role: "system", content: systemText },
+    { role: "user", content: userParts.join("\n\n") },
+  ];
+}
+
 class ProxyResponsesContextBuilder {
   build(agent, nextUserText, runtimeContext = null) {
-    const keepLast = Math.max(1, Number(agent.contextPolicy.keepLastMessages) || 12);
-    const tail = agent.history.slice(-keepLast);
-    const parts = [
-      `SYSTEM: ${agent.systemPreamble}`,
-      `PLANNER PROMPT: ${agent.plannerPrompt}`,
-      `INVARIANT CHECKER PROMPT: ${agent.invariantCheckerPrompt}`,
-      `FINAL RESPONDER PROMPT: ${agent.finalResponderPrompt}`,
-      `REFUSAL MODE PROMPT: ${agent.refusalPrompt}`,
-      buildProfilePriorityInstructions(agent.userProfile),
-      "ACTIVE USER PROFILE:",
-      JSON.stringify(agent.userProfile, null, 2),
-      "MEMORY LAYERS:",
-      "LONG-TERM MEMORY:",
-      JSON.stringify(agent.longTermMemory, null, 2),
-      "WORKING MEMORY:",
-      JSON.stringify(agent.workingMemory, null, 2),
-      "TASK STATE:",
-      JSON.stringify(agent.taskState, null, 2),
-      "INVARIANTS:",
-      JSON.stringify(agent.invariants, null, 2),
-    ];
-    if (runtimeContext?.draftPlan) {
-      parts.push("DRAFT PLAN:", JSON.stringify(runtimeContext.draftPlan, null, 2));
-    }
-    if (runtimeContext?.invariantCheck) {
-      parts.push("INVARIANT CHECK RESULT:", JSON.stringify(runtimeContext.invariantCheck, null, 2));
-    }
-    if (runtimeContext?.rag?.contextText?.trim()) {
-      parts.push(
-        "RAG MODE:",
-        "Отвечай только на основе найденных чанков ниже. Не выдумывай факты. Если ответа нет в чанках, прямо скажи, что он не найден в предоставленных документах. По возможности укажи source и section.",
-        "RETRIEVED CONTEXT:",
-        runtimeContext.rag.contextText.trim(),
-      );
-    }
-    parts.push(
-      "SHORT-TERM MEMORY:",
-      JSON.stringify({ messages: tail.map((item) => ({ role: item.role, content: String(item.text || "") })) }, null, 2),
-    );
-    if (tail.length > 0) {
-      parts.push("RECENT MESSAGES:");
-      for (const item of tail) parts.push(`${item.role.toUpperCase()}: ${item.text}`);
-    }
-    parts.push(`USER: ${nextUserText}`, "ASSISTANT:");
-    return parts.join("\n");
+    return compilePromptInput(buildPromptContract(agent, nextUserText, runtimeContext));
   }
 }
 
 class CompactOllamaContextBuilder {
   build(agent, nextUserText, runtimeContext = null) {
-    const parts = [`USER MESSAGES: ${JSON.stringify(buildCompactUserMessages(agent.history, nextUserText))}`];
-    if (runtimeContext?.draftPlan) {
-      parts.push("DRAFT PLAN:", JSON.stringify(runtimeContext.draftPlan, null, 2));
-    }
-    if (runtimeContext?.invariantCheck) {
-      parts.push("INVARIANT CHECK RESULT:", JSON.stringify(runtimeContext.invariantCheck, null, 2));
-    }
-    if (runtimeContext?.rag?.contextText?.trim()) {
-      parts.push("RETRIEVED CONTEXT:", runtimeContext.rag.contextText.trim());
-    }
-    return parts.join("\n");
+    return compilePromptInput(buildPromptContract(agent, nextUserText, runtimeContext));
   }
 }
 
@@ -83,36 +138,33 @@ class ContextBuilderRouter {
     this.compactBuilder = new CompactOllamaContextBuilder();
   }
 
+  buildPromptContract(agent, nextUserText, runtimeContext = null) {
+    return buildPromptContract(agent, nextUserText, runtimeContext);
+  }
+
   build(agent, nextUserText, runtimeContext = null) {
-    return agent.apiMode === API_MODES.OLLAMA_TOOLS_CHAT
-      ? this.compactBuilder.build(agent, nextUserText, runtimeContext)
-      : this.fullBuilder.build(agent, nextUserText, runtimeContext);
+    const contract = this.buildPromptContract(agent, nextUserText, runtimeContext);
+    if (agent.apiMode === API_MODES.OLLAMA_TOOLS_CHAT) {
+      return this.compactBuilder.build(agent, nextUserText, runtimeContext);
+    }
+    if (agent.apiMode === API_MODES.OLLAMA_CHAT) {
+      return compilePromptInput(contract);
+    }
+    return this.fullBuilder.build(agent, nextUserText, runtimeContext);
   }
 
   buildOllamaChatMessages(agent, nextUserText, runtimeContext = null) {
-    const systemParts = [
-      agent.systemPreamble,
-      agent.finalResponderPrompt,
-      buildProfilePriorityInstructions(agent.userProfile),
-    ];
-    const userParts = [`Вопрос пользователя:\n${String(nextUserText || "").trim()}`];
-    if (runtimeContext?.rag?.contextText?.trim()) {
-      systemParts.push(
-        "Если передан RETRIEVED CONTEXT, отвечай только на его основе. Не выдумывай факты. Если ответа нет в контексте, так и скажи.",
-      );
-      userParts.push("RETRIEVED CONTEXT:", runtimeContext.rag.contextText.trim());
-    }
-    if (runtimeContext?.invariantCheck) {
-      userParts.push("INVARIANT CHECK RESULT:", JSON.stringify(runtimeContext.invariantCheck, null, 2));
-    }
-    if (runtimeContext?.draftPlan) {
-      userParts.push("DRAFT PLAN:", JSON.stringify(runtimeContext.draftPlan, null, 2));
-    }
-    return [
-      { role: "system", content: systemParts.join("\n\n") },
-      { role: "user", content: userParts.join("\n\n") },
-    ];
+    return compilePromptMessages(
+      this.buildPromptContract(agent, nextUserText, runtimeContext),
+    );
   }
 }
 
-export { CompactOllamaContextBuilder, ContextBuilderRouter, ProxyResponsesContextBuilder };
+export {
+  CompactOllamaContextBuilder,
+  ContextBuilderRouter,
+  ProxyResponsesContextBuilder,
+  buildPromptContract,
+  compilePromptInput,
+  compilePromptMessages,
+};

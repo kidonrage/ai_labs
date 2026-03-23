@@ -87,12 +87,25 @@ class RagAnswerService {
       rag,
       {
         ...agent.ragConfig,
-        requestCompletion: async (prompt) => {
+        requestCompletion: async (promptSpec) => {
+          const ragPrompt =
+            promptSpec && typeof promptSpec === "object" && !Array.isArray(promptSpec)
+              ? promptSpec
+              : {
+                  question: String(payload.userText || "").trim(),
+                  contextText: rag.contextText,
+                  answerPolicy: "",
+                };
           const runtimeContext = {
             draftPlan: payload.draftPlan,
             invariantCheck: payload.invariantCheck,
+            rag: {
+              question: ragPrompt.question,
+              contextText: ragPrompt.contextText,
+              answerPolicy: ragPrompt.answerPolicy,
+            },
           };
-          const request = this.buildModelRequest(agent, prompt, runtimeContext);
+          const request = this.buildModelRequest(agent, payload.userText, runtimeContext);
           completion = await this.modelGateway.requestModelText(agent, {
             userMsg: payload.userMsg,
             input: request.input,

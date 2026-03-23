@@ -11,18 +11,43 @@ async function main() {
   });
   proxyAgent.history.push({ role: "user", text: "первый", at: new Date().toISOString() });
 
+  const proxyContract = proxyAgent.contextBuilder.buildPromptContract(proxyAgent, "второй", {
+    draftPlan: { summary: "plan" },
+    invariantCheck: { conflict: false },
+    rag: {
+      question: "второй",
+      contextText: "chunk context",
+      answerPolicy: "Ответь только по контексту.",
+    },
+  });
+  assert.deepEqual(Object.keys(proxyContract), [
+    "systemDirectives",
+    "contextBlocks",
+    "userMessage",
+  ]);
+  assert.equal(proxyContract.userMessage, "второй");
+  assert.equal(proxyContract.systemDirectives.filter((item) => /PROFILE DIRECTIVES/.test(item)).length, 1);
+
   const proxyInput = await proxyAgent._buildContextInput("второй", {
     draftPlan: { summary: "plan" },
     invariantCheck: { conflict: false },
-    rag: { contextText: "chunk context" },
+    rag: {
+      question: "второй",
+      contextText: "chunk context",
+      answerPolicy: "Ответь только по контексту.",
+    },
   });
-  assert.match(proxyInput, /SYSTEM:/);
+  assert.match(proxyInput, /SYSTEM DIRECTIVES:/);
   assert.match(proxyInput, /LONG-TERM MEMORY:/);
-  assert.match(proxyInput, /INVARIANTS:/);
+  assert.match(proxyInput, /ACTIVE INVARIANTS:/);
   assert.match(proxyInput, /DRAFT PLAN:/);
-  assert.match(proxyInput, /INVARIANT CHECK RESULT:/);
   assert.match(proxyInput, /RETRIEVED CONTEXT:/);
-  assert.match(proxyInput, /USER: второй/);
+  assert.match(proxyInput, /USER REQUEST:/);
+  assert.match(proxyInput, /второй/);
+  assert.doesNotMatch(proxyInput, /PLANNER PROMPT:/);
+  assert.doesNotMatch(proxyInput, /INVARIANT CHECKER PROMPT:/);
+  assert.doesNotMatch(proxyInput, /REFUSAL MODE PROMPT:/);
+  assert.doesNotMatch(proxyInput, /approve/);
 
   const compactAgent = new Agent({
     apiMode: "ollama_tools_chat",
@@ -37,16 +62,41 @@ async function main() {
   );
 
   const compactInput = await compactAgent._buildContextInput("второй");
-  assert.match(compactInput, /^USER MESSAGES:/);
-  assert.doesNotMatch(compactInput, /SYSTEM:/);
-  assert.doesNotMatch(compactInput, /LONG-TERM MEMORY:/);
-  assert.doesNotMatch(compactInput, /ответ/);
+  assert.match(compactInput, /SYSTEM DIRECTIVES:/);
+  assert.match(compactInput, /LONG-TERM MEMORY:/);
+  assert.match(compactInput, /USER MESSAGE HISTORY:/);
+  assert.doesNotMatch(compactInput, /PLANNER PROMPT:/);
+  assert.doesNotMatch(compactInput, /approve/);
 
   const compactWithRag = await compactAgent._buildContextInput("второй", {
-    rag: { contextText: "retrieved chunk" },
+    rag: {
+      question: "второй",
+      contextText: "retrieved chunk",
+      answerPolicy: "Только по контексту.",
+    },
   });
   assert.match(compactWithRag, /RETRIEVED CONTEXT:/);
   assert.match(compactWithRag, /retrieved chunk/);
+
+  const messages = compactAgent.contextBuilder.buildOllamaChatMessages(compactAgent, "второй", {
+    rag: {
+      question: "Что найдено?",
+      contextText: "retrieved chunk",
+      answerPolicy: "Только по контексту.",
+    },
+  });
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].role, "system");
+  assert.equal(messages[1].role, "user");
+  assert.match(messages[0].content, /PROFILE DIRECTIVES/);
+  assert.match(messages[0].content, /Только по контексту/);
+  assert.doesNotMatch(messages[0].content, /FINAL RESPONDER PROMPT:/);
+  assert.doesNotMatch(messages[0].content, /approve/);
+  assert.match(messages[1].content, /RETRIEVED CONTEXT:/);
+  assert.match(messages[1].content, /USER REQUEST:/);
+  assert.equal((messages[1].content.match(/RETRIEVED CONTEXT:/g) || []).length, 1);
+  assert.doesNotMatch(messages[1].content, /RAG-контекст:/);
+  assert.doesNotMatch(messages[1].content, /Не перечисляй источники/);
 }
 
 main();

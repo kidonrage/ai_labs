@@ -20,6 +20,7 @@ export {
 } from "./rag/evidence-service.js";
 export { loadRagIndex } from "./rag/index-repository.js";
 export {
+  buildRagAnswerPolicy,
   buildCitedAnswerPrompt,
   buildRagContext,
 } from "./rag/prompt-builder.js";

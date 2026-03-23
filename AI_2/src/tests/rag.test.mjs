@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   buildAnswerResultFromResponse,
+  buildRagAnswerPolicy,
   buildCitedAnswerPrompt,
   evaluateContextStrength,
   cosineSimilarity,
@@ -89,11 +90,20 @@ async function main() {
   const prompt = buildCitedAnswerPrompt("Что найдено?", retrieval.contextText);
   assert.match(prompt, /chunk_id: chunk-1/);
   assert.match(prompt, /Нужен обычный короткий ответ/);
+  assert.doesNotMatch(prompt, /JSON:/);
+
+  const answerPolicy = buildRagAnswerPolicy();
+  assert.match(answerPolicy, /RETRIEVED CONTEXT/);
+  assert.match(answerPolicy, /без markdown и без JSON/);
 
   let requestCalls = 0;
   const cited = await generateAnswerWithSourcesAndQuotes("Что найдено?", retrieval, {
-    requestCompletion: async () => {
+    requestCompletion: async (promptSpec) => {
       requestCalls += 1;
+      assert.equal(promptSpec.question, "Что найдено?");
+      assert.match(promptSpec.contextText, /chunk_id: chunk-1/);
+      assert.match(promptSpec.answerPolicy, /RETRIEVED CONTEXT/);
+      assert.match(promptSpec.prompt, /RAG-контекст:/);
       return JSON.stringify({
         answer: "Найден alpha.",
         sources: [{ source: "doc-1", section: "A", chunk_id: "chunk-1" }],

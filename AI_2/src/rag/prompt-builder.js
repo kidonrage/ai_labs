@@ -59,29 +59,34 @@ function buildRagContext(chunks) {
     .join("\n\n");
 }
 
-function buildCitedAnswerPrompt(question, contextText, options = {}) {
+function buildRagAnswerPolicy(options = {}) {
   const clarificationAnswer = normalizeNonEmptyString(
     options.safeNoDataAnswer,
     SAFE_NO_DATA_ANSWER,
   );
   return [
-    "Ответь на вопрос ТОЛЬКО по переданному RAG-контексту.",
+    "Если передан RETRIEVED CONTEXT, отвечай только по нему.",
     "Не используй внешние знания и не придумывай факты.",
     "Нужен обычный короткий ответ на русском, без markdown и без JSON.",
-    "Если ответа нет в контексте, верни ровно эту фразу:",
-    clarificationAnswer,
+    `Если ответа нет в контексте, верни ровно фразу: ${clarificationAnswer}`,
+  ].join("\n");
+}
+
+function buildCitedAnswerPrompt(question, contextText, options = {}) {
+  const answerPolicy = buildRagAnswerPolicy(options);
+  return [
+    answerPolicy,
     "Не перечисляй источники и не вставляй цитаты в ответ. Это сделает код после генерации.",
     "",
     `Вопрос: ${String(question || "").trim()}`,
     "",
     "RAG-контекст:",
     String(contextText || "").trim(),
-    "",
-    "JSON:",
   ].join("\n");
 }
 
 export {
+  buildRagAnswerPolicy,
   buildCitedAnswerPrompt,
   buildRagContext,
   buildRewritePrompt,

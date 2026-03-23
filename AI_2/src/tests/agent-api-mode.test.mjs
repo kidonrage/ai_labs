@@ -53,14 +53,20 @@ async function main() {
     { role: "assistant", text: "ответ", at: new Date().toISOString() },
   );
   const compactInput = await mcpAgent._buildContextInput("второй вопрос");
-  assert.match(compactInput, /USER MESSAGES:/);
+  assert.match(compactInput, /SYSTEM DIRECTIVES:/);
+  assert.match(compactInput, /ACTIVE USER PROFILE:/);
+  assert.match(compactInput, /ACTIVE INVARIANTS:/);
+  assert.match(compactInput, /LONG-TERM MEMORY:/);
+  assert.match(compactInput, /WORKING MEMORY:/);
+  assert.match(compactInput, /SHORT-TERM MEMORY:/);
+  assert.match(compactInput, /USER MESSAGE HISTORY:/);
   assert.match(compactInput, /первый вопрос/);
   assert.match(compactInput, /второй вопрос/);
-  assert.doesNotMatch(compactInput, /LONG-TERM MEMORY:/);
-  assert.doesNotMatch(compactInput, /WORKING MEMORY:/);
-  assert.doesNotMatch(compactInput, /SYSTEM:/);
-  assert.doesNotMatch(compactInput, /INVARIANTS:/);
-  assert.doesNotMatch(compactInput, /ответ/);
+  assert.match(compactInput, /ответ/);
+  assert.doesNotMatch(compactInput, /PLANNER PROMPT:/);
+  assert.doesNotMatch(compactInput, /INVARIANT CHECKER PROMPT:/);
+  assert.doesNotMatch(compactInput, /REFUSAL MODE PROMPT:/);
+  assert.doesNotMatch(compactInput, /approve/);
 
   const firstTurnAgent = new Agent({
     apiMode: "ollama_tools_chat",
@@ -75,10 +81,9 @@ async function main() {
     at: new Date().toISOString(),
   });
   const firstTurnInput = await firstTurnAgent._buildContextInput("собери summary");
-  const parsedFirstTurn = JSON.parse(
-    firstTurnInput.replace(/^USER MESSAGES:\s*/, ""),
-  );
-  assert.deepEqual(parsedFirstTurn, ["собери summary"]);
+  assert.match(firstTurnInput, /USER MESSAGE HISTORY:/);
+  assert.match(firstTurnInput, /"собери summary"/);
+  assert.match(firstTurnInput, /USER REQUEST:/);
 
   assert.equal(
     Agent.extractUserVisibleAnswer(

@@ -15,7 +15,11 @@ import {
   repairAnswerEvidence,
   validateAnswerEvidence,
 } from "./evidence-service.js";
-import { buildCitedAnswerPrompt, buildRagContext } from "./prompt-builder.js";
+import {
+  buildCitedAnswerPrompt,
+  buildRagAnswerPolicy,
+  buildRagContext,
+} from "./prompt-builder.js";
 
 async function generateAnswerWithSourcesAndQuotes(question, retrievalResult, config = {}) {
   const diagnostics = evaluateContextStrength(retrievalResult, config);
@@ -36,10 +40,17 @@ async function generateAnswerWithSourcesAndQuotes(question, retrievalResult, con
     retrievalResult && retrievalResult.contextText,
     buildRagContext(chunks),
   );
+  const questionText = String(question || "").trim();
+  const answerPolicy = buildRagAnswerPolicy(config);
   const prompt = buildCitedAnswerPrompt(question, contextText, config);
   let rawResponseText = "";
   try {
-    rawResponseText = await requestCompletion(prompt);
+    rawResponseText = await requestCompletion({
+      question: questionText,
+      contextText,
+      answerPolicy,
+      prompt,
+    });
     const sanitizedText = stripMarkdownCodeFences(rawResponseText);
     const parsed = extractJsonObjectFromText(sanitizedText);
     const normalized = parsed
