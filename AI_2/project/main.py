@@ -1,8 +1,7 @@
 from pathlib import Path
 import json
 import re
-
-import requests
+from urllib import error, request
 
 
 DOCS_DIR = Path("docs")
@@ -523,20 +522,40 @@ def print_chunk_statistics(name, chunks):
 
 def get_embedding(text):
     """Request one embedding from Ollama for the given chunk text."""
-    payload = {
-        "model": OLLAMA_MODEL,
-        "input": text,
-    }
+    payload = json.dumps(
+        {
+            "model": OLLAMA_MODEL,
+            "input": text,
+        }
+    ).encode("utf-8")
+    http_request = request.Request(
+        OLLAMA_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
 
     try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=60)
-        response.raise_for_status()
-        data = response.json()
-    except requests.RequestException as error:
-        print(f"Failed to get embedding from Ollama: {error}")
+        with request.urlopen(http_request, timeout=60) as response:
+            data = json.load(response)
+    except error.HTTPError as http_error:
+        details = http_error.read().decode("utf-8", errors="replace").strip()
+        message = f"{http_error.code} {http_error.reason}"
+        if details:
+            message = f"{message} - {details}"
+        print(f"Failed to get embedding from Ollama: {message}")
         return None
-    except ValueError as error:
-        print(f"Failed to parse Ollama response: {error}")
+    except error.URLError as url_error:
+        print(f"Failed to get embedding from Ollama: {url_error.reason}")
+        return None
+    except TimeoutError:
+        print("Failed to get embedding from Ollama: request timed out")
+        return None
+    except json.JSONDecodeError as decode_error:
+        print(f"Failed to parse Ollama response: {decode_error}")
+        return None
+    except OSError as os_error:
+        print(f"Failed to get embedding from Ollama: {os_error}")
         return None
 
     embedding = data.get("embeddings")
@@ -548,6 +567,16 @@ def get_embedding(text):
 
     print("Ollama returned an unexpected embedding format.")
     return None
+
+
+def ensure_embedding_service():
+    """Fail fast if the embedding backend is unavailable."""
+    probe_embedding = get_embedding("embedding availability probe")
+    if probe_embedding is None:
+        raise RuntimeError(
+            "Embedding backend is unavailable. Start Ollama and make sure "
+            f"{OLLAMA_MODEL} is reachable on {OLLAMA_URL}."
+        )
 
 
 def attach_embeddings(chunks):
@@ -589,6 +618,7 @@ def main():
     structured_chunks = build_structured_chunks(documents)
     print_chunk_statistics("Fixed chunks", fixed_chunks)
     print_chunk_statistics("Structured chunks", structured_chunks)
+    ensure_embedding_service()
 
     print("Building embeddings for fixed chunks...")
     fixed_index = attach_embeddings(fixed_chunks)

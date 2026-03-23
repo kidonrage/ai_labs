@@ -32,11 +32,13 @@ If a file cannot be read, the script prints a clear message and skips it.
 
 ## Install Dependencies
 
+The script uses only the Python standard library.
+You can run it directly, or create a virtual environment if you want isolation:
+
 ```bash
 cd project
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
 ```
 
 ## Run Ollama with `embeddinggemma`
