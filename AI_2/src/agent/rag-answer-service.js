@@ -1,6 +1,6 @@
 import { isOllamaFamilyMode } from "../api-profiles.js";
 import {
-  buildAnswerResultFromResponse,
+  generateAnswerWithSourcesAndQuotes,
   makeSafeAnswerResult,
   retrieveChunks,
 } from "../rag.js";
@@ -11,29 +11,44 @@ class RagAnswerService {
     this.modelGateway = modelGateway;
   }
 
+  buildModelRequest(agent, inputText, runtimeContext = null) {
+    return {
+      input: this.contextBuilder.build(agent, inputText, runtimeContext),
+      messages: isOllamaFamilyMode(agent.apiMode)
+        ? this.contextBuilder.buildOllamaChatMessages(agent, inputText, runtimeContext)
+        : null,
+    };
+  }
+
+  pushAssistantMessage(agent, completion, answerText, answerResult = null) {
+    const usage = completion?.usage || null;
+    const message = {
+      role: "assistant",
+      text: answerText,
+      at: new Date().toISOString(),
+      model: completion?.modelName || "rag-cited-answer",
+      requestInputTokens: usage ? usage.inputTokens : undefined,
+      requestOutputTokens: usage ? usage.outputTokens : undefined,
+      requestTotalTokens: usage ? usage.totalTokens : undefined,
+      costRub: completion?.costRub != null ? completion.costRub : undefined,
+      durationSeconds:
+        completion?.durationSeconds != null ? completion.durationSeconds : undefined,
+    };
+    if (answerResult) message.answerResult = answerResult;
+    agent.history.push(message);
+    agent._emitStateChanged();
+  }
+
   async generateFinalResponse(agent, { userText, userMsg, draftPlan, invariantCheck, rag = null }) {
     const runtimeContext = { draftPlan, invariantCheck, rag };
+    const request = this.buildModelRequest(agent, userText, runtimeContext);
     const completion = await this.modelGateway.requestModelText(agent, {
       userMsg,
-      input: this.contextBuilder.build(agent, userText, runtimeContext),
-      messages: isOllamaFamilyMode(agent.apiMode)
-        ? this.contextBuilder.buildOllamaChatMessages(agent, userText, runtimeContext)
-        : null,
+      input: request.input,
+      messages: request.messages,
       temperature: agent.temperature,
     });
-    agent.history.push({
-      role: "assistant",
-      text: completion.answerText,
-      at: new Date().toISOString(),
-      model: completion.modelName,
-      requestInputTokens: completion.usage ? completion.usage.inputTokens : undefined,
-      requestOutputTokens: completion.usage ? completion.usage.outputTokens : undefined,
-      requestTotalTokens: completion.usage ? completion.usage.totalTokens : undefined,
-      costRub: completion.costRub != null ? completion.costRub : undefined,
-      durationSeconds:
-        completion.durationSeconds != null ? completion.durationSeconds : undefined,
-    });
-    agent._emitStateChanged();
+    this.pushAssistantMessage(agent, completion, completion.answerText);
     return {
       answer: completion.answerText,
       model: completion.modelName,
@@ -66,10 +81,29 @@ class RagAnswerService {
 
   async answerWithRag(agent, payload) {
     const rag = await retrieveChunks(payload.userText, agent.ragConfig);
-    const response = await this.generateFinalResponse(agent, { ...payload, rag });
-    const answerResult = buildAnswerResultFromResponse(response.answer, rag, agent.ragConfig);
-    const lastAssistantMessage = agent.history[agent.history.length - 1];
-    if (lastAssistantMessage?.role === "assistant") lastAssistantMessage.answerResult = answerResult;
+    let completion = null;
+    const answerResult = await generateAnswerWithSourcesAndQuotes(
+      payload.userText,
+      rag,
+      {
+        ...agent.ragConfig,
+        requestCompletion: async (prompt) => {
+          const runtimeContext = {
+            draftPlan: payload.draftPlan,
+            invariantCheck: payload.invariantCheck,
+          };
+          const request = this.buildModelRequest(agent, prompt, runtimeContext);
+          completion = await this.modelGateway.requestModelText(agent, {
+            userMsg: payload.userMsg,
+            input: request.input,
+            messages: request.messages,
+            temperature: agent.temperature,
+          });
+          return completion.answerText;
+        },
+      },
+    );
+    this.pushAssistantMessage(agent, completion, answerResult.answer, answerResult);
     agent.lastRagResult = {
       enabled: true,
       ...rag,
@@ -81,12 +115,12 @@ class RagAnswerService {
     };
     agent._emitStateChanged();
     return {
-      answer: response.answer,
+      answer: answerResult.answer,
       answerResult,
-      model: response.model,
-      usage: response.usage,
-      durationSeconds: response.durationSeconds,
-      costRub: response.costRub,
+      model: completion?.modelName || "rag-cited-answer",
+      usage: completion?.usage || null,
+      durationSeconds: completion?.durationSeconds ?? null,
+      costRub: completion?.costRub ?? null,
       invariantCheck: payload.invariantCheck,
       retrievedChunks: Array.isArray(rag.chunks) ? rag.chunks : [],
       refused: false,
