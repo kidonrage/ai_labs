@@ -69,6 +69,7 @@ After running the script, these files will be created:
 - `index_structured.json`
 
 Each file contains a list of chunk objects with metadata and an `embedding` field.
+If `../static/` exists, the script also writes fresh copies there so the main app can use the new index immediately.
 
 ## Chunking Strategies
 
@@ -81,5 +82,8 @@ Each file contains a list of chunk objects with metadata and an `embedding` fiel
 ### Structured chunking
 
 - For Markdown files, splits by headings like `#`, `##`, `###`
-- For other file types, keeps the whole file as one chunk
-- Good when you want chunks to follow document structure
+- Large sections are split again into smaller chunks with overlap
+- Table of contents and very small low-signal sections are skipped
+- List items, paragraphs, and code fences are kept as separate semantic blocks when possible
+- For other file types, text is also split into bounded chunks instead of one giant block
+- Good when you want chunks to follow document structure without creating huge mixed-topic embeddings

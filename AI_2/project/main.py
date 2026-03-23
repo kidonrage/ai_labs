@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import re
 
 import requests
 
@@ -10,6 +11,11 @@ OLLAMA_URL = "http://localhost:11434/api/embed"
 OLLAMA_MODEL = "embeddinggemma"
 FIXED_CHUNK_SIZE = 800
 FIXED_OVERLAP = 100
+STRUCTURED_CHUNK_SIZE = 900
+STRUCTURED_OVERLAP = 120
+MIN_STRUCTURED_CHUNK_TEXT = 120
+LOW_SIGNAL_SECTION_NAMES = {"table of contents", "contents", "toc"}
+LIST_ITEM_RE = re.compile(r"^([-*+] |\d+[.)] )")
 
 
 def find_document_files(docs_dir):
@@ -90,6 +96,86 @@ def split_fixed_text(text, chunk_size, overlap):
     return chunks
 
 
+def compact_text(text):
+    """Collapse whitespace to estimate useful text size."""
+    return " ".join(str(text or "").split())
+
+
+def chunk_plain_text(text, chunk_size):
+    """Split plain text into bounded chunks, preferring whitespace boundaries."""
+    chunks = []
+    raw_text = str(text or "").strip()
+
+    if not raw_text:
+        return chunks
+
+    start = 0
+
+    while start < len(raw_text):
+        end = min(len(raw_text), start + chunk_size)
+
+        if end < len(raw_text):
+            boundary = raw_text.rfind(" ", start + max(1, chunk_size // 2), end)
+            if boundary > start:
+                end = boundary
+
+        chunk_text = raw_text[start:end].strip()
+        if chunk_text:
+            chunks.append(chunk_text)
+
+        start = end
+        while start < len(raw_text) and raw_text[start].isspace():
+            start += 1
+
+    return chunks
+
+
+def split_large_block(text, chunk_size):
+    """Split one oversized block by lines, sentences, or plain text fallback."""
+    block_text = str(text or "").strip()
+
+    if not block_text:
+        return []
+
+    if len(block_text) <= chunk_size:
+        return [block_text]
+
+    lines = [line.strip() for line in block_text.splitlines() if line.strip()]
+    if len(lines) > 1:
+        units = lines
+        separator = "\n"
+    else:
+        sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", block_text) if part.strip()]
+        if len(sentences) > 1:
+            units = sentences
+            separator = " "
+        else:
+            return chunk_plain_text(block_text, chunk_size)
+
+    chunks = []
+    current = []
+
+    for unit in units:
+        candidate = separator.join(current + [unit]).strip() if current else unit
+        if current and len(candidate) > chunk_size:
+            chunks.append(separator.join(current).strip())
+            current = [unit]
+        else:
+            current.append(unit)
+
+    if current:
+        chunks.append(separator.join(current).strip())
+
+    normalized = []
+    for chunk_text in chunks:
+        if len(chunk_text) <= chunk_size:
+            normalized.append(chunk_text)
+        else:
+            normalized.extend(chunk_plain_text(chunk_text, chunk_size))
+
+    return normalized
+
+
 def build_fixed_chunks(documents):
     """Create fixed-size chunks for every loaded document."""
     chunks = []
@@ -112,6 +198,29 @@ def build_fixed_chunks(documents):
             chunk_number += 1
 
     return chunks
+
+
+def strip_leading_markdown_heading(text):
+    """Remove the first markdown heading from a section body."""
+    lines = str(text or "").splitlines()
+    if not lines:
+        return ""
+
+    first_non_empty_index = None
+    for index, line in enumerate(lines):
+        if line.strip():
+            first_non_empty_index = index
+            break
+
+    if first_non_empty_index is None:
+        return ""
+
+    if lines[first_non_empty_index].lstrip().startswith("#"):
+        lines = lines[first_non_empty_index + 1 :]
+    else:
+        lines = lines[first_non_empty_index:]
+
+    return "\n".join(lines).strip()
 
 
 def parse_markdown_sections(text):
@@ -158,34 +267,258 @@ def parse_markdown_sections(text):
     return [{"section": "full_document", "text": text}]
 
 
+def split_text_blocks(text):
+    """Split text into semantic blocks: paragraphs, list items, and code fences."""
+    blocks = []
+    current_lines = []
+    current_kind = None
+    in_code_block = False
+
+    def flush_current():
+        nonlocal current_lines, current_kind
+        if current_lines:
+            block_text = "\n".join(current_lines).strip()
+            if block_text:
+                blocks.append(block_text)
+        current_lines = []
+        current_kind = None
+
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            if not in_code_block:
+                flush_current()
+                current_lines = [line]
+                current_kind = "code"
+                in_code_block = True
+            else:
+                current_lines.append(line)
+                flush_current()
+                in_code_block = False
+            continue
+
+        if in_code_block:
+            current_lines.append(line)
+            continue
+
+        if not stripped:
+            flush_current()
+            continue
+
+        is_list_item = bool(LIST_ITEM_RE.match(stripped))
+
+        if is_list_item:
+            flush_current()
+            current_lines = [line]
+            current_kind = "list"
+            continue
+
+        if current_kind == "list":
+            current_lines.append(line)
+            continue
+
+        if current_kind == "paragraph":
+            current_lines.append(line)
+            continue
+
+        flush_current()
+        current_lines = [line]
+        current_kind = "paragraph"
+
+    flush_current()
+    return blocks
+
+
+def take_overlap_blocks(blocks, overlap_chars):
+    """Keep a small tail from the previous chunk to stabilize retrieval."""
+    overlap = []
+    total_length = 0
+
+    for block in reversed(blocks):
+        added_length = len(block) + (2 if overlap else 0)
+        overlap.insert(0, block)
+        total_length += added_length
+        if total_length >= overlap_chars:
+            break
+
+    return overlap
+
+
+def pack_blocks_into_chunks(blocks, chunk_size, overlap_chars):
+    """Assemble bounded chunks from semantic blocks."""
+    chunks = []
+    current = []
+
+    def joined_length(items):
+        if not items:
+            return 0
+        return len("\n\n".join(items))
+
+    for block in blocks:
+        block_text = str(block or "").strip()
+        if not block_text:
+            continue
+
+        candidate = "\n\n".join(current + [block_text]).strip() if current else block_text
+        if current and len(candidate) > chunk_size:
+            chunks.append("\n\n".join(current).strip())
+            current = take_overlap_blocks(current, overlap_chars)
+
+            while current and len("\n\n".join(current + [block_text])) > chunk_size:
+                current.pop(0)
+
+        if current and len("\n\n".join(current + [block_text])) <= chunk_size:
+            current.append(block_text)
+        elif not current:
+            current = [block_text]
+        else:
+            chunks.append("\n\n".join(current).strip())
+            current = [block_text]
+
+    if current:
+        chunks.append("\n\n".join(current).strip())
+
+    if len(chunks) > 1 and joined_length([chunks[-1]]) < MIN_STRUCTURED_CHUNK_TEXT:
+        chunks[-2] = f"{chunks[-2]}\n\n{chunks[-1]}".strip()
+        chunks.pop()
+
+    return chunks
+
+
+def should_skip_markdown_section(section_name, text):
+    """Drop noisy markdown sections that mostly hurt retrieval quality."""
+    normalized_name = str(section_name or "").strip().lower()
+    compact = compact_text(text)
+
+    if normalized_name in LOW_SIGNAL_SECTION_NAMES:
+        return True
+
+    if len(compact) < MIN_STRUCTURED_CHUNK_TEXT:
+        return True
+
+    return False
+
+
+def build_structured_parts(section_name, text, is_markdown):
+    """Split one logical section into retrieval-friendly subchunks."""
+    raw_text = str(text or "").strip()
+    if not raw_text:
+        return []
+
+    heading_prefix = ""
+    body_text = raw_text
+
+    if is_markdown:
+        heading_prefix = f"## {section_name}".strip()
+        body_text = strip_leading_markdown_heading(raw_text)
+        if should_skip_markdown_section(section_name, body_text):
+            return []
+    elif len(compact_text(raw_text)) < 40:
+        return []
+
+    payload_text = body_text or raw_text
+    max_payload_size = STRUCTURED_CHUNK_SIZE - (len(heading_prefix) + 2 if heading_prefix else 0)
+    max_payload_size = max(200, max_payload_size)
+
+    blocks = split_text_blocks(payload_text)
+    expanded_blocks = []
+
+    for block in blocks if blocks else [payload_text]:
+        expanded_blocks.extend(split_large_block(block, max_payload_size))
+
+    payload_chunks = pack_blocks_into_chunks(
+        expanded_blocks,
+        max_payload_size,
+        STRUCTURED_OVERLAP,
+    )
+
+    parts = []
+    for index, payload_chunk in enumerate(payload_chunks, start=1):
+        chunk_text = (
+            f"{heading_prefix}\n\n{payload_chunk}".strip()
+            if heading_prefix
+            else payload_chunk.strip()
+        )
+        if len(compact_text(chunk_text)) < MIN_STRUCTURED_CHUNK_TEXT:
+            continue
+        parts.append(
+            {
+                "section": section_name if len(payload_chunks) == 1 else f"{section_name} / part_{index}",
+                "text": chunk_text,
+            }
+        )
+
+    return parts
+
+
 def build_structured_chunks(documents):
-    """Create structure-based chunks: markdown by headings, others as one chunk."""
+    """Create structure-aware chunks with hard size limits."""
     chunks = []
     chunk_number = 1
 
     for document in documents:
-        if document["path"].suffix.lower() == ".md":
-            parts = parse_markdown_sections(document["text"])
-        else:
-            parts = [{"section": "full_document", "text": document["text"]}]
+        is_markdown = document["path"].suffix.lower() == ".md"
+        raw_parts = (
+            parse_markdown_sections(document["text"])
+            if is_markdown
+            else [{"section": "full_document", "text": document["text"]}]
+        )
 
-        for part in parts:
-            if not part["text"].strip():
-                continue
-
-            chunks.append(
-                {
-                    "chunk_id": f"structured_{chunk_number}",
-                    "source": document["source"],
-                    "file": document["name"],
-                    "section": part["section"],
-                    "strategy": "structured",
-                    "text": part["text"],
-                }
+        for part in raw_parts:
+            structured_parts = build_structured_parts(
+                part.get("section", "full_document"),
+                part.get("text", ""),
+                is_markdown,
             )
-            chunk_number += 1
+
+            for structured_part in structured_parts:
+                if not structured_part["text"].strip():
+                    continue
+
+                chunks.append(
+                    {
+                        "chunk_id": f"structured_{chunk_number}",
+                        "source": document["source"],
+                        "file": document["name"],
+                        "section": structured_part["section"],
+                        "strategy": "structured",
+                        "text": structured_part["text"],
+                    }
+                )
+                chunk_number += 1
 
     return chunks
+
+
+def save_index_outputs(file_name, data):
+    """Save generated indexes to the local project and shared app static folder."""
+    targets = [Path(file_name)]
+    shared_static_path = Path("..") / "static" / file_name
+
+    if shared_static_path.parent.exists():
+        targets.append(shared_static_path)
+
+    for target in targets:
+        save_json(target, data)
+
+
+def print_chunk_statistics(name, chunks):
+    """Print simple chunk size diagnostics to spot retrieval problems early."""
+    sizes = sorted(len(compact_text(chunk.get("text", ""))) for chunk in chunks if chunk.get("text"))
+
+    if not sizes:
+        print(f"{name}: no chunks")
+        return
+
+    def pick(percentile):
+        index = min(len(sizes) - 1, int((len(sizes) - 1) * percentile))
+        return sizes[index]
+
+    print(
+        f"{name}: count={len(sizes)} min={pick(0):d} "
+        f"p50={pick(0.5):d} p90={pick(0.9):d} max={pick(1):d}"
+    )
 
 
 def get_embedding(text):
@@ -254,14 +587,16 @@ def main():
 
     fixed_chunks = build_fixed_chunks(documents)
     structured_chunks = build_structured_chunks(documents)
+    print_chunk_statistics("Fixed chunks", fixed_chunks)
+    print_chunk_statistics("Structured chunks", structured_chunks)
 
     print("Building embeddings for fixed chunks...")
     fixed_index = attach_embeddings(fixed_chunks)
-    save_json(Path("index_fixed.json"), fixed_index)
+    save_index_outputs("index_fixed.json", fixed_index)
 
     print("Building embeddings for structured chunks...")
     structured_index = attach_embeddings(structured_chunks)
-    save_json(Path("index_structured.json"), structured_index)
+    save_index_outputs("index_structured.json", structured_index)
 
     print("")
     print("Done.")
