@@ -11,24 +11,46 @@ import {
   normalizePositiveInt,
 } from "./shared.js";
 
+function buildEmbeddingFailureHint(embeddingApiUrl, embeddingModel, error) {
+  const message = String(error && error.message ? error.message : error || "").trim();
+  const target = String(embeddingApiUrl || DEFAULT_EMBEDDING_API_URL);
+  const model = String(embeddingModel || DEFAULT_EMBEDDING_MODEL);
+  const looksLikeNetworkFailure = /load failed|failed to fetch|networkerror|network request failed/i.test(message);
+  if (looksLikeNetworkFailure) {
+    if (/^https?:\/\/localhost/i.test(target)) {
+      return `Не удалось получить embedding вопроса через ${target} для модели ${model}. Похоже, локальный сервер Ollama не запущен или не принимает запросы.`;
+    }
+    return `Не удалось получить embedding вопроса через ${target} для модели ${model}. Проверь доступность embedding API.`;
+  }
+  return `Не удалось получить embedding вопроса через ${target} для модели ${model}: ${message || "неизвестная ошибка"}`;
+}
+
 async function getQuestionEmbedding(
   question,
   { embeddingApiUrl = DEFAULT_EMBEDDING_API_URL, embeddingModel = DEFAULT_EMBEDDING_MODEL } = {},
 ) {
-  const response = await fetch(embeddingApiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: embeddingModel, input: String(question || "") }),
-  });
+  let response;
+  try {
+    response = await fetch(embeddingApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: embeddingModel, input: String(question || "") }),
+    });
+  } catch (error) {
+    throw new Error(buildEmbeddingFailureHint(embeddingApiUrl, embeddingModel, error));
+  }
   if (!response.ok) {
+    const details = await response.text().catch(() => "");
     throw new Error(
-      `Не удалось получить embedding вопроса: ${response.status} ${response.statusText}`,
+      `Не удалось получить embedding вопроса через ${embeddingApiUrl} для модели ${embeddingModel}: ${response.status} ${response.statusText}${details ? ` — ${details.trim()}` : ""}`,
     );
   }
   const data = await response.json();
   const embedding = Array.isArray(data.embeddings) ? data.embeddings[0] : data.embedding;
   if (!Array.isArray(embedding) || embedding.length === 0) {
-    throw new Error("Embedding API вернул невалидный ответ.");
+    throw new Error(
+      `Embedding API ${embeddingApiUrl} для модели ${embeddingModel} вернул невалидный ответ.`,
+    );
   }
   return embedding;
 }
