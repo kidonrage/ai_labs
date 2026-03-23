@@ -1,3 +1,5 @@
+import { extractJsonObject } from "../json-extraction.js";
+
 function normalizePositiveInt(value, fallback) {
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
@@ -31,25 +33,7 @@ function normalizeChunkRecord(chunk) {
 }
 
 function extractJsonObjectFromText(text) {
-  const raw = String(text || "").trim();
-  if (!raw) return null;
-
-  try {
-    return JSON.parse(raw);
-  } catch {
-    const startCandidates = [raw.indexOf("{"), raw.indexOf("[")].filter((i) => i >= 0);
-    if (startCandidates.length === 0) return null;
-    const startIndex = Math.min(...startCandidates);
-    for (let end = raw.length; end > startIndex; end -= 1) {
-      try {
-        return JSON.parse(raw.slice(startIndex, end).trim());
-      } catch {
-        // keep shrinking
-      }
-    }
-  }
-
-  return null;
+  return extractJsonObject(text);
 }
 
 function stripMarkdownCodeFences(text) {
