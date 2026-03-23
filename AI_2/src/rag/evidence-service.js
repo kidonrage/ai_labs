@@ -25,13 +25,19 @@ function makeSourceFromChunk(chunk) {
 }
 
 function makeQuoteFromChunk(chunk, maxLength = 180) {
-  const compact = normalizeNonEmptyString(chunk && chunk.text, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const raw = chunk && typeof chunk.text === "string" ? chunk.text : "";
+  const leadingOffset = raw.search(/\S/);
+  if (leadingOffset === -1) {
+    return {
+      ...makeSourceFromChunk(chunk),
+      quote: "",
+    };
+  }
+  const trailingOffset = raw.trimEnd().length;
+  const snippetEnd = Math.min(trailingOffset, leadingOffset + maxLength);
   return {
     ...makeSourceFromChunk(chunk),
-    quote:
-      compact.length <= maxLength ? compact : `${compact.slice(0, maxLength).trim()}...`,
+    quote: raw.slice(leadingOffset, snippetEnd),
   };
 }
 

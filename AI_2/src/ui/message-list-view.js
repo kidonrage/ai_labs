@@ -13,6 +13,10 @@ function formatCost(value) {
   return `${round4(value).toFixed(4)} ₽`;
 }
 
+function formatEvidenceQuote(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
 function messageStatsLines(message) {
   const lines = [];
   const hasUsage =
@@ -63,7 +67,7 @@ class MessageListView {
       }
       for (const [title, list, map] of [
         ["Источники:", Array.isArray(answerResult.sources) ? answerResult.sources : [], (item) => `${item.source || "unknown"} | ${item.section || "unknown"} | ${item.chunk_id || "unknown"}`],
-        ["Цитаты:", Array.isArray(answerResult.quotes) ? answerResult.quotes : [], (item) => `[${item.chunk_id || "unknown"}] "${item.quote || ""}"`],
+        ["Цитаты:", Array.isArray(answerResult.quotes) ? answerResult.quotes : [], (item) => `[${item.chunk_id || "unknown"}] "${formatEvidenceQuote(item.quote)}"`],
       ]) {
         if (list.length === 0) continue;
         const header = document.createElement("div");

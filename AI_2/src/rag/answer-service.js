@@ -21,6 +21,51 @@ import {
   buildRagContext,
 } from "./prompt-builder.js";
 
+function uniqueIssues(issues = [], extraIssues = []) {
+  return Array.from(new Set([...(Array.isArray(issues) ? issues : []), ...extraIssues]));
+}
+
+function finalizeAnswerEvidence(answerResult, chunks) {
+  const repaired = repairAnswerEvidence(answerResult, chunks);
+  const repairedValidation = validateAnswerEvidence(repaired, chunks);
+  if (repairedValidation.valid) {
+    return { answerResult: repaired, validation: repairedValidation };
+  }
+
+  const rebuilt = buildDerivedAnswerResult(repaired.answer, chunks, {
+    needsClarification: repaired.needsClarification,
+    weakContext: false,
+  });
+  const rebuiltValidation = validateAnswerEvidence(rebuilt, chunks);
+  if (rebuiltValidation.valid) {
+    return {
+      answerResult: rebuilt,
+      validation: {
+        valid: true,
+        issues: uniqueIssues(repairedValidation.issues, ["evidence_rebuilt_from_chunks"]),
+        answerResult: rebuilt,
+      },
+    };
+  }
+
+  const degraded = normalizeAnswerResult({
+    ...repaired,
+    sources: [],
+    quotes: [],
+  });
+  return {
+    answerResult: degraded,
+    validation: {
+      valid: false,
+      issues: uniqueIssues(
+        uniqueIssues(repairedValidation.issues, rebuiltValidation.issues),
+        ["evidence_degraded"],
+      ),
+      answerResult: degraded,
+    },
+  };
+}
+
 async function generateAnswerWithSourcesAndQuotes(question, retrievalResult, config = {}) {
   const diagnostics = evaluateContextStrength(retrievalResult, config);
   const chunks = Array.isArray(retrievalResult && retrievalResult.chunks)
@@ -55,29 +100,33 @@ async function generateAnswerWithSourcesAndQuotes(question, retrievalResult, con
     const parsed = extractJsonObjectFromText(sanitizedText);
     const normalized = parsed
       ? normalizeAnswerResult(parsed, { weakContext: false })
-      : buildDerivedAnswerResult(sanitizedText, chunks, { needsClarification: false, weakContext: false });
-    const repaired = repairAnswerEvidence(normalized, chunks);
-    const validation = validateAnswerEvidence(repaired, chunks);
-    if (validation.valid) {
-      return { ...repaired, weakContext: false, diagnostics, validation, rawResponseText };
-    }
-    const fallback = buildDerivedAnswerResult(
-      normalizeNonEmptyString(sanitizedText, SAFE_PARSE_FAILURE_ANSWER),
-      chunks,
-      { needsClarification: false, weakContext: false },
+      : buildDerivedAnswerResult(sanitizedText, chunks, {
+          needsClarification: false,
+          weakContext: false,
+        });
+    const extractedAnswer = normalizeNonEmptyString(
+      normalized.answer,
+      parsed ? "" : normalizeNonEmptyString(sanitizedText, ""),
     );
-    const fallbackValidation = validateAnswerEvidence(fallback, chunks);
-    if (fallbackValidation.valid) {
+    if (!extractedAnswer) {
       return {
-        ...fallbackValidation.answerResult,
-        weakContext: false,
+        ...makeSafeAnswerResult({ answer: SAFE_PARSE_FAILURE_ANSWER }),
         diagnostics,
-        validation: fallbackValidation,
+        validation: { valid: false, issues: ["answer_missing"] },
         rawResponseText,
       };
     }
+    const { answerResult, validation } = finalizeAnswerEvidence(
+      normalizeAnswerResult({
+        ...normalized,
+        answer: extractedAnswer,
+        weakContext: false,
+      }),
+      chunks,
+    );
     return {
-      ...makeSafeAnswerResult({ answer: SAFE_PARSE_FAILURE_ANSWER }),
+      ...answerResult,
+      weakContext: false,
       diagnostics,
       validation,
       rawResponseText,

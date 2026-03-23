@@ -8,8 +8,10 @@ import {
   filterChunksBySimilarity,
   generateAnswerWithSourcesAndQuotes,
   getRagModeConfig,
+  makeSafeAnswerResult,
   validateAnswerEvidence,
 } from "../rag.js";
+import { SAFE_PARSE_FAILURE_ANSWER } from "../rag/constants.js";
 
 async function main() {
   assert.equal(cosineSimilarity([1, 0], [1, 0]), 1);
@@ -166,6 +168,84 @@ async function main() {
   assert.equal(plainTextFallback.answer, "Найден alpha в документе.");
   assert.equal(plainTextFallback.sources.length, 1);
   assert.equal(plainTextFallback.quotes.length, 1);
+
+  const longChunkText = `  alpha beta
+gamma delta epsilon
+${"theta ".repeat(50)}`.trimEnd();
+  const longChunkRetrieval = {
+    chunks: [
+      {
+        chunk_id: "chunk-long",
+        source: "doc-long",
+        section: "Long",
+        text: longChunkText,
+        similarity: 0.94,
+      },
+    ],
+    contextText:
+      "[Chunk 1]\nchunk_id: chunk-long\nsource: doc-long\nsection: Long\ntext:\n" + longChunkText,
+  };
+  const longChunkAnswer = await generateAnswerWithSourcesAndQuotes(
+    "Что найдено в длинном чанке?",
+    longChunkRetrieval,
+    {
+      requestCompletion: async () => "Нормальный ответ модели.",
+    },
+  );
+  assert.equal(longChunkAnswer.answer, "Нормальный ответ модели.");
+  assert.equal(longChunkAnswer.validation.valid, true);
+  assert.match(longChunkAnswer.quotes[0].quote, /^alpha beta\ngamma delta epsilon/);
+
+  const repairedEvidence = await generateAnswerWithSourcesAndQuotes("Что найдено?", retrieval, {
+    requestCompletion: async () =>
+      JSON.stringify({
+        answer: "Ответ нужно сохранить.",
+        sources: [{ source: "doc-1", section: "A", chunk_id: "chunk-1" }],
+        quotes: [
+          {
+            source: "doc-1",
+            section: "A",
+            chunk_id: "chunk-1",
+            quote: "",
+          },
+        ],
+        needsClarification: false,
+      }),
+  });
+  assert.equal(repairedEvidence.answer, "Ответ нужно сохранить.");
+  assert.equal(repairedEvidence.validation.valid, true);
+  assert.equal(repairedEvidence.quotes[0].chunk_id, "chunk-1");
+
+  const missingChunkIdRetrieval = {
+    chunks: [
+      {
+        source: "doc-missing",
+        section: "NoId",
+        text: "alpha beta gamma",
+        similarity: 0.91,
+      },
+    ],
+    contextText: "[Chunk 1]\nsource: doc-missing\nsection: NoId\ntext:\nalpha beta gamma",
+  };
+  const degradedEvidence = await generateAnswerWithSourcesAndQuotes(
+    "Что найдено без chunk id?",
+    missingChunkIdRetrieval,
+    {
+      requestCompletion: async () => "Ответ без валидного evidence.",
+    },
+  );
+  assert.equal(degradedEvidence.answer, "Ответ без валидного evidence.");
+  assert.equal(degradedEvidence.validation.valid, false);
+  assert.equal(degradedEvidence.sources.length, 0);
+  assert.equal(degradedEvidence.quotes.length, 0);
+  assert.match(degradedEvidence.validation.issues.join(","), /evidence_degraded/);
+
+  const answerMissing = await generateAnswerWithSourcesAndQuotes("Что найдено?", retrieval, {
+    requestCompletion: async () => JSON.stringify({ sources: [], quotes: [] }),
+  });
+  assert.equal(answerMissing.answer, SAFE_PARSE_FAILURE_ANSWER);
+  assert.deepEqual(answerMissing.sources, makeSafeAnswerResult().sources);
+  assert.match(answerMissing.validation.issues.join(","), /answer_missing/);
 
   const derived = buildAnswerResultFromResponse("Найден alpha в документе.", retrieval);
   assert.equal(derived.answer, "Найден alpha в документе.");
