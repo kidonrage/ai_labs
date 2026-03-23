@@ -25,7 +25,7 @@ function renderChatList(chats, activeChatId) {
   const list = $("chatList");
   if (!list) return;
   list.innerHTML = "";
-  for (const chat of chats) {
+  for (const chat of [...chats].reverse()) {
     const item = document.createElement("button");
     item.type = "button";
     item.className = `chat-list-item${chat.id === activeChatId ? " active" : ""}`;
