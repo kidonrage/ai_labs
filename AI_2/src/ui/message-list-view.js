@@ -53,8 +53,13 @@ class MessageListView {
   scrollToBottom() {
     const messages = $("messages");
     if (!messages) return;
-    requestAnimationFrame(() => {
+    const apply = () => {
       messages.scrollTop = messages.scrollHeight;
+    };
+    apply();
+    requestAnimationFrame(() => {
+      apply();
+      requestAnimationFrame(apply);
     });
   }
 

@@ -23,15 +23,29 @@ html, body { height: 100%; }
 
 body {
   margin: 0;
-  background: radial-gradient(1200px 800px at 20% 10%, #142035, var(--bg));
+  position: relative;
+  overflow: hidden;
+  background: var(--bg);
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(1200px 800px at 20% 10%, #142035, var(--bg));
+  z-index: -1;
+  pointer-events: none;
 }
 
 .app {
   max-width: 1480px;
   margin: 0 auto;
+  height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -41,6 +55,7 @@ body {
     "sidebar composer";
   gap: var(--app-gap);
   padding: var(--app-padding);
+  overflow: hidden;
 }
 
 .sidebar,
@@ -155,7 +170,14 @@ body {
     --composer-width: calc(100vw - (var(--app-padding) * 2));
   }
 
+  body {
+    overflow: auto;
+  }
+
   .app {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
     grid-template-columns: 1fr;
     grid-template-rows: auto auto minmax(0, 1fr) auto;
     grid-template-areas:
@@ -163,6 +185,7 @@ body {
       "topbar"
       "chat"
       "composer";
+    overflow: visible;
   }
 
   .sidebar {

@@ -3,6 +3,10 @@
   padding: 12px;
   display: grid;
   gap: 12px;
+  position: sticky;
+  top: var(--app-padding);
+  z-index: 15;
+  backdrop-filter: blur(14px);
 }
 
 .topbar-head,
