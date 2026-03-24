@@ -157,21 +157,85 @@
       </dialog>
 
       <main class="chat">
-        <details id="factsPanel" class="facts-panel" hidden>
-          <summary>Memory Layers (long/working/short)</summary>
-          <pre id="factsContent"></pre>
-        </details>
-        <details id="invariantPanel" class="facts-panel" hidden>
-          <summary>Invariant Guard (debug)</summary>
-          <div class="task-status-actions">
-            <label class="field" style="min-width: 260px">
-              <span>Инварианты</span>
-              <select id="invariantSelect"></select>
-            </label>
-            <button id="addInvariant" class="btn secondary" type="button">Добавить</button>
-            <button id="removeInvariant" class="btn danger" type="button">Удалить</button>
+        <details id="debugPanel" class="debug-panel" hidden>
+          <summary>Debug</summary>
+          <div class="debug-tabs" role="tablist" aria-label="Debug панели">
+            <button
+              id="debugTabMemory"
+              class="debug-tab is-active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="debugPanelMemory"
+              data-debug-tab="memory"
+            >
+              Memory
+            </button>
+            <button
+              id="debugTabInvariant"
+              class="debug-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="debugPanelInvariant"
+              data-debug-tab="invariant"
+            >
+              Invariant
+            </button>
+            <button
+              id="debugTabRag"
+              class="debug-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="debugPanelRag"
+              data-debug-tab="rag"
+            >
+              RAG
+            </button>
           </div>
-          <pre id="invariantContent"></pre>
+
+          <section
+            id="debugPanelMemory"
+            class="debug-tab-panel"
+            role="tabpanel"
+            aria-labelledby="debugTabMemory"
+          >
+            <pre id="factsContent"></pre>
+          </section>
+
+          <section
+            id="debugPanelInvariant"
+            class="debug-tab-panel"
+            role="tabpanel"
+            aria-labelledby="debugTabInvariant"
+            hidden
+          >
+            <div class="task-status-actions">
+              <label class="field" style="min-width: 260px">
+                <span>Инварианты</span>
+                <select id="invariantSelect"></select>
+              </label>
+              <button id="addInvariant" class="btn secondary" type="button">Добавить</button>
+              <button id="removeInvariant" class="btn danger" type="button">Удалить</button>
+            </div>
+            <pre id="invariantContent"></pre>
+          </section>
+
+          <section
+            id="debugPanelRag"
+            class="debug-tab-panel"
+            role="tabpanel"
+            aria-labelledby="debugTabRag"
+            hidden
+          >
+            <div class="debug-rag-head">
+              <div class="task-status-title">RAG Retrieval</div>
+              <div id="ragSummary" class="rag-summary">RAG выключен</div>
+            </div>
+            <div id="ragMeta" class="rag-meta" hidden></div>
+            <div id="ragChunks" class="rag-chunks"></div>
+          </section>
         </details>
         <section id="taskStatusPanel" class="task-status-panel" aria-live="polite" hidden>
           <div class="task-status-head">
@@ -202,14 +266,6 @@
             <span class="task-start-hint">Start Task: <code>start: ...</code></span>
           </div>
         </section>
-        <details id="ragPanel" class="rag-panel" hidden>
-          <summary>
-            <span class="task-status-title">RAG Retrieval</span>
-            <span id="ragSummary" class="rag-summary">RAG выключен</span>
-          </summary>
-          <div id="ragMeta" class="rag-meta" hidden></div>
-          <div id="ragChunks" class="rag-chunks"></div>
-        </details>
         <div id="messages" class="messages" aria-live="polite"></div>
       </main>
 
