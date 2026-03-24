@@ -3,7 +3,7 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 18px;
+  padding: 18px 18px calc(var(--composer-height) + var(--composer-gap)) 18px;
   display: flex;
   flex-direction: column;
   gap: 14px;

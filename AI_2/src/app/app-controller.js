@@ -54,6 +54,12 @@ class AppController {
   isUiBusy() { return this.isSending || this.isBatchRunning; }
   setSending(value) { this.isSending = value; setBusy(this.isUiBusy()); }
   setBatchRunning(value) { this.isBatchRunning = value; setBusy(this.isUiBusy()); }
+  syncComposerOffset() {
+    const composer = document.querySelector(".composer");
+    if (!(composer instanceof HTMLElement)) return;
+    const height = Math.ceil(composer.getBoundingClientRect().height);
+    document.documentElement.style.setProperty("--composer-height", `${height}px`);
+  }
   openSettingsDialog() {
     const dialog = $("settingsDialog");
     if (!dialog) return;
@@ -77,6 +83,7 @@ class AppController {
   }
 
   init() {
+    this.syncComposerOffset();
     this.renderWorkspaceChrome();
     this.session.bindAgentToActiveChat();
     addMessage({
@@ -89,6 +96,13 @@ class AppController {
       meta: { statsLines: [] },
     });
     this.bindEvents();
+    if (typeof ResizeObserver === "function") {
+      const composer = document.querySelector(".composer");
+      if (composer instanceof HTMLElement) {
+        this.composerResizeObserver = new ResizeObserver(() => this.syncComposerOffset());
+        this.composerResizeObserver.observe(composer);
+      }
+    }
   }
 
   handleCreateProfile() {
@@ -106,6 +120,7 @@ class AppController {
   }
 
   bindEvents() {
+    window.addEventListener("resize", () => this.syncComposerOffset());
     $("send").addEventListener("click", () => this.composer.handleSend());
     $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.composer.handleSend(); } });
     $("pauseTask").addEventListener("click", () => this.composer.sendTaskControlCommand("pause"));

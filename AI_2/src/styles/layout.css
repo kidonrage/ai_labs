@@ -11,6 +11,8 @@
   --app-gap: 14px;
   --app-padding: 14px;
   --sidebar-width: 300px;
+  --composer-gap: 16px;
+  --composer-height: 160px;
   --composer-width: min(
     calc(100vw - (var(--app-padding) * 2) - var(--sidebar-width) - var(--app-gap)),
     calc(1480px - (var(--app-padding) * 2) - var(--sidebar-width) - var(--app-gap))
@@ -95,7 +97,6 @@ body::before {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding-bottom: 220px;
 }
 
 .composer {
@@ -194,7 +195,7 @@ body::before {
   }
 
   .chat {
-    padding-bottom: 260px;
+    padding-bottom: 0;
   }
 
   .composer {
