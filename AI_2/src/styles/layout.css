@@ -8,6 +8,13 @@
   --border: rgba(255,255,255,0.10);
   --shadow: 0 10px 30px rgba(0,0,0,0.35);
   --radius: 16px;
+  --app-gap: 14px;
+  --app-padding: 14px;
+  --sidebar-width: 300px;
+  --composer-width: min(
+    calc(100vw - (var(--app-padding) * 2) - var(--sidebar-width) - var(--app-gap)),
+    calc(1480px - (var(--app-padding) * 2) - var(--sidebar-width) - var(--app-gap))
+  );
 }
 
 * { box-sizing: border-box; }
@@ -32,8 +39,8 @@ body {
     "sidebar topbar"
     "sidebar chat"
     "sidebar composer";
-  gap: 14px;
-  padding: 14px;
+  gap: var(--app-gap);
+  padding: var(--app-padding);
 }
 
 .sidebar,
@@ -72,10 +79,15 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  padding-bottom: 220px;
 }
 
 .composer {
   grid-area: composer;
+  position: fixed;
+  right: max(var(--app-padding), calc((100vw - 1480px) / 2 + var(--app-padding)));
+  bottom: var(--app-padding);
   display: grid;
   grid-template-columns: 1fr 120px;
   grid-template-areas: "totals totals" "input send";
@@ -83,6 +95,9 @@ body {
   align-items: end;
   background: rgba(17, 24, 38, 0.55);
   padding: 14px;
+  width: var(--composer-width);
+  z-index: 20;
+  backdrop-filter: blur(14px);
 }
 
 #totals {
@@ -136,6 +151,10 @@ body {
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
 @media (max-width: 760px) {
+  :root {
+    --composer-width: calc(100vw - (var(--app-padding) * 2));
+  }
+
   .app {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -151,9 +170,17 @@ body {
     height: auto;
   }
 
+  .chat {
+    padding-bottom: 260px;
+  }
+
   .composer {
+    right: var(--app-padding);
+    left: var(--app-padding);
+    bottom: var(--app-padding);
     grid-template-columns: 1fr;
     grid-template-areas: "totals" "input" "send";
+    width: auto;
   }
 
   #send { min-width: 0; }

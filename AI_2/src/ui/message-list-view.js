@@ -50,6 +50,14 @@ class MessageListView {
     this.totalsBarView = totalsBarView;
   }
 
+  scrollToBottom() {
+    const messages = $("messages");
+    if (!messages) return;
+    requestAnimationFrame(() => {
+      messages.scrollTop = messages.scrollHeight;
+    });
+  }
+
   addMessage({ role, text, meta = {} }) {
     const wrap = document.createElement("div");
     wrap.className = "msg " + role;
@@ -94,7 +102,7 @@ class MessageListView {
       wrap.appendChild(stats);
     }
     $("messages").appendChild(wrap);
-    $("messages").scrollTop = $("messages").scrollHeight;
+    this.scrollToBottom();
   }
 
   renderHistory(history, summaryTotals, options = {}) {
@@ -111,6 +119,7 @@ class MessageListView {
         },
       });
     }
+    this.scrollToBottom();
     this.totalsBarView.render(globalTotals, options);
   }
 }
