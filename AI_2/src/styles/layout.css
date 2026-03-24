@@ -10,6 +10,7 @@
   --radius: 16px;
   --app-gap: 14px;
   --app-padding: 14px;
+  --sticky-top: 14px;
   --sidebar-width: 300px;
   --composer-gap: 16px;
   --composer-height: 160px;
@@ -72,7 +73,7 @@ body::before {
 .sidebar {
   grid-area: sidebar;
   position: sticky;
-  top: 14px;
+  top: var(--sticky-top);
   align-self: start;
   height: calc(100vh - 28px);
   background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
