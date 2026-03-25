@@ -6,7 +6,7 @@ import { ComposerController } from "./composer-controller.js";
 import { getPrivateApiKey, loadPrivateConfig } from "./private-config.js";
 import { ProfileRegistry } from "./profile-registry.js";
 import { promptInvariantDraft, promptProfileDraft } from "./prompts.js";
-import { buildRagConfigFromUi, populateRagModeSelect } from "./rag-config.js";
+import { buildRagConfigFromUi, populateRagModeSelect, syncRagModeVisibility } from "./rag-config.js";
 import { RagBatchController } from "./rag-batch-controller.js";
 import { renderChatList, renderInvariantControls, renderProfileMenu } from "./ui-renderers.js";
 import { $, clonePlain } from "./utils.js";
@@ -145,7 +145,10 @@ class AppController {
       this.renderWorkspaceChrome();
       this.session.bindAgentToActiveChat();
     });
-    $("ragEnabled").addEventListener("change", () => this.session.agent?.setRagConfig(buildRagConfigFromUi(this.session.agent.ragConfig)));
+    $("ragEnabled").addEventListener("change", () => {
+      syncRagModeVisibility();
+      this.session.agent?.setRagConfig(buildRagConfigFromUi(this.session.agent.ragConfig));
+    });
     $("ragRetrievalMode").addEventListener("change", () => this.session.agent?.setRagConfig(buildRagConfigFromUi(this.session.agent.ragConfig)));
     $("profileMenuCreate").addEventListener("click", () => this.handleCreateProfile());
     $("profileMenuList").addEventListener("click", (e) => {

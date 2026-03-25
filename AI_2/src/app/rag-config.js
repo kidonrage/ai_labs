@@ -2,6 +2,13 @@ import { getRagModeConfig } from "../rag.js";
 import { DEFAULT_RAG_MODE, normalizeRagMode, RAG_MODE_OPTIONS } from "../rag-modes.js";
 import { $ } from "./utils.js";
 
+function syncRagModeVisibility() {
+  const ragModeField = $("ragModeField");
+  const ragEnabled = $("ragEnabled");
+  if (!ragModeField || !ragEnabled) return;
+  ragModeField.hidden = ragEnabled.value !== "on";
+}
+
 function populateRagModeSelect() {
   const select = $("ragRetrievalMode");
   if (!select) return;
@@ -37,6 +44,7 @@ function syncRagControlsFromAgent(boundAgent) {
   const ragConfig = boundAgent?.ragConfig && typeof boundAgent.ragConfig === "object" ? boundAgent.ragConfig : {};
   if ($("ragEnabled")) $("ragEnabled").value = ragConfig.enabled ? "on" : "off";
   if ($("ragRetrievalMode")) $("ragRetrievalMode").value = normalizeRagMode(ragConfig.mode);
+  syncRagModeVisibility();
 }
 
-export { buildRagConfigFromUi, populateRagModeSelect, syncRagControlsFromAgent };
+export { buildRagConfigFromUi, populateRagModeSelect, syncRagControlsFromAgent, syncRagModeVisibility };
