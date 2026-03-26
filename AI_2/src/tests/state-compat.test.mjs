@@ -31,6 +31,7 @@ async function main() {
   agent.loadState({
     version: 7,
     config: fallbackConfig,
+    contextPolicy: { memoryBaseUrl: "http://localhost:11434/api/chat" },
     facts: { repo: "ai_2", tags: ["rag", "agent"] },
     history: [{ role: "user", text: "старый", at: new Date().toISOString() }],
     invariants: ["Node.js нельзя менять"],
@@ -42,6 +43,7 @@ async function main() {
   assert.equal(agent.workingMemory.task.entities.repo, "ai_2");
   assert.equal(agent.workingMemory.task.entities.tags, "rag; agent");
   assert.deepEqual(agent.invariants, ["Node.js нельзя менять"]);
+  assert.equal(persisted.contextPolicy.memoryBaseUrl, "http://localhost:11434/api/chat");
   assert.equal(persisted.history.length, 1);
 }
 

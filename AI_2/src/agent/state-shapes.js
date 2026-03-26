@@ -101,6 +101,7 @@ const makeDefaultContextPolicy = () => ({
   keepLastMessages: 20,
   memoryModel: "gpt-3.5-turbo",
   memoryTemperature: 0.1,
+  memoryBaseUrl: "",
 });
 
 const makeDefaultRagConfig = () => ({

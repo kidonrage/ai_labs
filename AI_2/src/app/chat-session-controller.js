@@ -19,6 +19,30 @@ import { $ } from "./utils.js";
 import { ProfileRegistry } from "./profile-registry.js";
 import { defaultTotals, clonePlain } from "./utils.js";
 
+function syncSummaryBaseUrlPlaceholder(apiMode, baseUrl) {
+  const input = $("summaryBaseUrl");
+  if (!input) return;
+  input.placeholder = `По умолчанию: ${endpointForApiMode(apiMode, baseUrl)}`;
+}
+
+function normalizeSummaryBaseUrlOverride(value, apiMode, baseUrl) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) return "";
+  const mainUrl = endpointForApiMode(apiMode, baseUrl);
+  const summaryApiMode = inferApiMode(null, rawValue);
+  const normalized = endpointForApiMode(summaryApiMode, rawValue);
+  return normalized === mainUrl ? "" : normalized;
+}
+
+function readSummaryBaseUrlOverride(contextPolicy, apiMode, baseUrl) {
+  const rawValue =
+    contextPolicy && typeof contextPolicy.memoryBaseUrl === "string"
+      ? contextPolicy.memoryBaseUrl.trim()
+      : "";
+  if (!rawValue) return "";
+  return endpointForApiMode(inferApiMode(null, rawValue), rawValue || baseUrl);
+}
+
 class ChatSessionController {
   constructor({ workspace, fallbackConfig, getEffectiveApiKey, isUiBusy }) {
     this.workspace = workspace;
@@ -89,6 +113,14 @@ class ChatSessionController {
       $("model").value = typeof branchState.config.model === "string" ? branchState.config.model : defaultModelForApiMode($("apiMode").value);
       if (typeof branchState.config.temperature === "number") $("temperature").value = String(branchState.config.temperature);
     }
+    syncSummaryBaseUrlPlaceholder($("apiMode").value, $("baseUrl").value);
+    if ($("summaryBaseUrl")) {
+      $("summaryBaseUrl").value = readSummaryBaseUrlOverride(
+        this.agent.contextPolicy,
+        $("apiMode").value,
+        $("baseUrl").value,
+      );
+    }
     if (Array.isArray(this.agent.history) && this.agent.history.length > 0) {
       renderHistory(this.agent.history, this.agent.summaryTotals, { keepLastMessages: this.agent.contextPolicy.keepLastMessages });
     } else {
@@ -101,14 +133,32 @@ class ChatSessionController {
 
   syncAgentConfig() {
     if (!this.agent) return;
+    const apiMode = inferApiMode($("apiMode").value, $("baseUrl").value);
+    const baseUrl = endpointForApiMode($("apiMode").value, $("baseUrl").value);
     this.agent.setConfig({
-      apiMode: inferApiMode($("apiMode").value, $("baseUrl").value),
-      baseUrl: endpointForApiMode($("apiMode").value, $("baseUrl").value),
+      apiMode,
+      baseUrl,
       apiKey: this.getEffectiveApiKey(),
       model: $("model").value,
       temperature: Number($("temperature").value),
     });
+    this.agent.setContextPolicy({
+      memoryBaseUrl: normalizeSummaryBaseUrlOverride(
+        $("summaryBaseUrl")?.value,
+        apiMode,
+        baseUrl,
+      ),
+    });
     this.agent.setRagConfig(buildRagConfigFromUi(this.agent.ragConfig));
+    syncRagControlsFromAgent(this.agent);
+    syncSummaryBaseUrlPlaceholder(apiMode, baseUrl);
+    if ($("summaryBaseUrl")) {
+      $("summaryBaseUrl").value = readSummaryBaseUrlOverride(
+        this.agent.contextPolicy,
+        apiMode,
+        baseUrl,
+      );
+    }
   }
 }
 

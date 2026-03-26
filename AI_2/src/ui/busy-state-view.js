@@ -5,8 +5,9 @@ class BusyStateView {
     const ids = [
       "send", "newChat", "branchChat", "profileMenuCreate", "renameChat", "deleteChat",
       "profileMenuTrigger", "openSettings", "input", "model", "temperature", "baseUrl",
-      "ragEnabled", "ragRetrievalMode", "pauseTask", "continueTask", "invariantSelect",
-      "addInvariant", "removeInvariant", "runRagBatch",
+      "ragEnabled", "ragRetrievalMode", "ragEmbeddingBaseUrl", "summaryBaseUrl",
+      "pauseTask", "continueTask", "invariantSelect", "addInvariant", "removeInvariant",
+      "runRagBatch",
     ];
     for (const id of ids) {
       const el = $(id);

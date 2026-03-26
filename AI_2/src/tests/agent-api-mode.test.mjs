@@ -114,6 +114,64 @@ async function main() {
   } finally {
     globalThis.fetch = originalFetch;
   }
+
+  const proxySummaryAgent = new Agent({
+    apiMode: "proxyapi_responses",
+    baseUrl: "https://api.proxyapi.ru/openai/v1/responses",
+    apiKey: "secret",
+    model: "gpt-4.1",
+    temperature: 0.3,
+  });
+  proxySummaryAgent.setContextPolicy({ memoryBaseUrl: "http://localhost:11434" });
+
+  const summaryCalls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    summaryCalls.push({
+      url,
+      headers: options.headers || {},
+      body: JSON.parse(options.body),
+    });
+    return {
+      ok: true,
+      json: async () => ({
+        model: "gemma3",
+        message: {
+          role: "assistant",
+          content: JSON.stringify({
+            write: {
+              working: {
+                set_goal: null,
+                add_constraints: [],
+                add_decisions: [],
+                add_open_questions: [],
+                merge_entities: {},
+                add_artifacts: [],
+              },
+              long_term: {
+                add_preferences: {},
+                add_facts: [],
+                add_profile: {},
+                add_stable_decisions: [],
+              },
+            },
+          }),
+        },
+        prompt_eval_count: 12,
+        eval_count: 8,
+        total_duration: 1_500_000_000,
+      }),
+    };
+  };
+  try {
+    await proxySummaryAgent._updateMemoryWithLLM("локальная суммаризация");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(summaryCalls.length, 1);
+  assert.equal(summaryCalls[0].url, "http://localhost:11434/api/chat");
+  assert.equal(summaryCalls[0].body.model, "gemma3");
+  assert.equal(summaryCalls[0].headers.Authorization, undefined);
 }
 
 main();

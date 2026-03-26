@@ -1,4 +1,5 @@
 import {
+  defaultModelForApiMode,
   endpointForApiMode,
   inferApiMode,
   isOllamaFamilyMode,
@@ -13,21 +14,40 @@ import {
 } from "./answer-extractors.js";
 
 class ModelGateway {
-  endpointUrl(agent) {
-    return endpointForApiMode(agent.apiMode, agent.baseUrl);
+  resolveRequestConfig(
+    agent,
+    { apiModeOverride = null, baseUrlOverride = null, apiKeyOverride = undefined } = {},
+  ) {
+    const hasBaseUrlOverride = typeof baseUrlOverride === "string" && baseUrlOverride.trim();
+    const baseUrl =
+      hasBaseUrlOverride
+        ? baseUrlOverride.trim()
+        : agent.baseUrl;
+    const apiMode = hasBaseUrlOverride
+      ? inferApiMode(null, baseUrl)
+      : inferApiMode(apiModeOverride || agent.apiMode, baseUrl);
+    return {
+      apiMode,
+      baseUrl,
+      apiKey: apiKeyOverride === undefined ? agent.apiKey : apiKeyOverride,
+    };
   }
 
-  requestHeaders(agent) {
+  endpointUrl(requestConfig) {
+    return endpointForApiMode(requestConfig.apiMode, requestConfig.baseUrl);
+  }
+
+  requestHeaders(requestConfig) {
     const headers = { "Content-Type": "application/json" };
-    if (requiresAuthorization(agent.apiMode)) {
-      if (!agent.apiKey) throw new Error("API key пустой.");
-      headers.Authorization = `Bearer ${agent.apiKey}`;
+    if (requiresAuthorization(requestConfig.apiMode)) {
+      if (!requestConfig.apiKey) throw new Error("API key пустой.");
+      headers.Authorization = `Bearer ${requestConfig.apiKey}`;
     }
     return headers;
   }
 
-  buildResponseRequestBody(agent, { model, input, temperature, messages = null }) {
-    if (isOllamaFamilyMode(agent.apiMode)) {
+  buildResponseRequestBodyForApiMode(apiMode, { model, input, temperature, messages = null }) {
+    if (isOllamaFamilyMode(apiMode)) {
       const body = {
         model,
         messages:
@@ -37,28 +57,56 @@ class ModelGateway {
         stream: false,
         options: { temperature: Number(temperature) },
       };
-      if (agent.apiMode === "ollama_tools_chat") body.think = false;
+      if (apiMode === "ollama_tools_chat") body.think = false;
       return body;
     }
     return { model, input, temperature: Number(temperature) };
   }
 
-  memoryModelName(agent) {
-    return isOllamaFamilyMode(agent.apiMode)
-      ? agent.model
-      : agent.contextPolicy.memoryModel || "gpt-3.5-turbo";
+  buildResponseRequestBody(agent, payload) {
+    return this.buildResponseRequestBodyForApiMode(agent.apiMode, payload);
   }
 
-  async requestModelText(agent, { userMsg = null, input, messages = null, temperature = null, modelOverride = null }) {
-    const body = this.buildResponseRequestBody(agent, {
+  memoryModelName(agent, apiMode = agent.apiMode) {
+    if (isOllamaFamilyMode(apiMode)) {
+      return isOllamaFamilyMode(agent.apiMode) && typeof agent.model === "string" && agent.model.trim()
+        ? agent.model.trim()
+        : defaultModelForApiMode(apiMode, "");
+    }
+    const memoryModel =
+      typeof agent.contextPolicy?.memoryModel === "string"
+        ? agent.contextPolicy.memoryModel.trim()
+        : "";
+    return memoryModel || defaultModelForApiMode(apiMode, "");
+  }
+
+  async requestModelText(
+    agent,
+    {
+      userMsg = null,
+      input,
+      messages = null,
+      temperature = null,
+      modelOverride = null,
+      apiModeOverride = null,
+      baseUrlOverride = null,
+      apiKeyOverride = undefined,
+    },
+  ) {
+    const requestConfig = this.resolveRequestConfig(agent, {
+      apiModeOverride,
+      baseUrlOverride,
+      apiKeyOverride,
+    });
+    const body = this.buildResponseRequestBodyForApiMode(requestConfig.apiMode, {
       model: modelOverride || agent.model,
       input,
       messages,
       temperature: temperature ?? agent.temperature,
     });
-    const resp = await fetch(this.endpointUrl(agent), {
+    const resp = await fetch(this.endpointUrl(requestConfig), {
       method: "POST",
-      headers: this.requestHeaders(agent),
+      headers: this.requestHeaders(requestConfig),
       body: JSON.stringify(body),
     });
     if (!resp.ok) {
@@ -66,10 +114,10 @@ class ModelGateway {
       throw new Error(`HTTP ${resp.status}: ${text || resp.statusText}`);
     }
     const dto = await resp.json();
-    const answerText = extractUserVisibleAnswer(dto, agent.apiMode);
+    const answerText = extractUserVisibleAnswer(dto, requestConfig.apiMode);
     if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
     const usage = normalizeUsage(dto);
-    const durationSeconds = extractDurationSeconds(dto, agent.apiMode);
+    const durationSeconds = extractDurationSeconds(dto, requestConfig.apiMode);
     const modelName = dto.model || body.model;
     const costRub = usage
       ? OpenAIModelPricing.costRub(modelName, usage.inputTokens, usage.outputTokens)
@@ -84,12 +132,12 @@ class ModelGateway {
         durationSeconds: durationSeconds != null ? durationSeconds : undefined,
       });
     }
-    return { answerText, usage, durationSeconds, modelName, costRub, dto };
+    return { answerText, usage, durationSeconds, modelName, costRub, dto, apiMode: requestConfig.apiMode };
   }
 
   async runTaskLLMStep(agent, input) {
     const completion = await this.requestModelText(agent, { input });
-    const answerText = extractAnswerText(completion.dto, agent.apiMode);
+    const answerText = extractAnswerText(completion.dto, completion.apiMode);
     if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
     return answerText;
   }

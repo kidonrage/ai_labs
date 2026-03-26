@@ -162,7 +162,7 @@ class AppController {
     $("addInvariant").addEventListener("click", () => { const draft = promptInvariantDraft(); if (!draft || !this.session.agent) return; const current = Array.isArray(this.session.agent.invariants) ? clonePlain(this.session.agent.invariants) : []; if (current.some((item) => item.toLowerCase() === draft.toLowerCase())) return window.alert("Такой инвариант уже существует."); current.push(draft); this.session.agent.setInvariants(current); renderInvariantControls(this.session.agent); });
     $("removeInvariant").addEventListener("click", () => { if (!this.session.agent || !$("invariantSelect").value) return; const invariant = $("invariantSelect").value; if (!window.confirm(`Удалить инвариант "${invariant}"?`)) return; this.session.agent.setInvariants((Array.isArray(this.session.agent.invariants) ? clonePlain(this.session.agent.invariants) : []).filter((item) => item !== invariant)); renderInvariantControls(this.session.agent); });
     $("apiMode").addEventListener("change", () => { const apiMode = inferApiMode($("apiMode").value, $("baseUrl").value); $("baseUrl").value = defaultEndpointForApiMode(apiMode); $("model").value = defaultModelForApiMode(apiMode); this.session.syncAgentConfig(); });
-    for (const id of ["baseUrl", "model", "temperature"]) $(id).addEventListener("change", () => this.session.syncAgentConfig());
+    for (const id of ["baseUrl", "model", "temperature", "ragEmbeddingBaseUrl", "summaryBaseUrl"]) $(id).addEventListener("change", () => this.session.syncAgentConfig());
   }
 }
 

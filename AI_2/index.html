@@ -137,6 +137,25 @@
                 <span>Режим RAG</span>
                 <select id="ragRetrievalMode"></select>
               </label>
+
+              <label class="field field-wide">
+                <span>RAG Base URL</span>
+                <input
+                  id="ragEmbeddingBaseUrl"
+                  type="text"
+                  value="http://localhost:11434/api/embed"
+                />
+              </label>
+
+              <label class="field field-wide">
+                <span>Base URL суммаризации</span>
+                <input
+                  id="summaryBaseUrl"
+                  type="text"
+                  value=""
+                  placeholder="По умолчанию: API URL текущего чата"
+                />
+              </label>
             </div>
 
             <section class="settings-section">

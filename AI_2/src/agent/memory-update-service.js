@@ -1,4 +1,4 @@
-import { API_MODES, requiresAuthorization } from "../api-profiles.js";
+import { API_MODES, inferApiMode, requiresAuthorization } from "../api-profiles.js";
 import { extractJsonObject } from "../json-extraction.js";
 import { OpenAIModelPricing } from "../pricing.js";
 import { applyMemoryWritePatch, extractMemoryWritePatch } from "./memory-patcher.js";
@@ -9,8 +9,13 @@ class MemoryUpdateService {
   }
 
   async update(agent, nextUserText) {
-    if (agent.apiMode === API_MODES.OLLAMA_TOOLS_CHAT) return;
-    if (requiresAuthorization(agent.apiMode) && !agent.apiKey) {
+    const memoryBaseUrl =
+      typeof agent.contextPolicy?.memoryBaseUrl === "string"
+        ? agent.contextPolicy.memoryBaseUrl.trim()
+        : "";
+    const memoryApiMode = inferApiMode(null, memoryBaseUrl || agent.baseUrl);
+    if (agent.apiMode === API_MODES.OLLAMA_TOOLS_CHAT && !memoryBaseUrl) return;
+    if (requiresAuthorization(memoryApiMode) && !agent.apiKey) {
       throw new Error("API key пустой (нужен для memory update).");
     }
     const keepLast = Math.max(1, Number(agent.contextPolicy.keepLastMessages) || 12);
@@ -36,7 +41,9 @@ class MemoryUpdateService {
     const completion = await this.modelGateway.requestModelText(agent, {
       input,
       temperature: agent.contextPolicy.memoryTemperature ?? 0.1,
-      modelOverride: this.modelGateway.memoryModelName(agent),
+      modelOverride: this.modelGateway.memoryModelName(agent, memoryApiMode),
+      apiModeOverride: memoryApiMode,
+      baseUrlOverride: memoryBaseUrl,
     });
     const parsed = extractJsonObject(completion.answerText);
     const writePatch = extractMemoryWritePatch(parsed);
