@@ -13,6 +13,16 @@ import {
   extractUserVisibleAnswer,
 } from "./answer-extractors.js";
 
+function mergeOllamaOptions(temperature, extraOptions = null) {
+  const options = { temperature: Number(temperature) };
+  const raw = extraOptions && typeof extraOptions === "object" ? extraOptions : {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (value == null) continue;
+    options[key] = value;
+  }
+  return options;
+}
+
 class ModelGateway {
   resolveRequestConfig(
     agent,
@@ -46,7 +56,10 @@ class ModelGateway {
     return headers;
   }
 
-  buildResponseRequestBodyForApiMode(apiMode, { model, input, temperature, messages = null }) {
+  buildResponseRequestBodyForApiMode(
+    apiMode,
+    { model, input, temperature, messages = null, ollamaOptions = null },
+  ) {
     if (isOllamaFamilyMode(apiMode)) {
       const body = {
         model,
@@ -55,7 +68,7 @@ class ModelGateway {
             ? messages
             : [{ role: "user", content: String(input || "") }],
         stream: false,
-        options: { temperature: Number(temperature) },
+        options: mergeOllamaOptions(temperature, ollamaOptions),
       };
       if (apiMode === "ollama_tools_chat") body.think = false;
       return body;
@@ -64,7 +77,10 @@ class ModelGateway {
   }
 
   buildResponseRequestBody(agent, payload) {
-    return this.buildResponseRequestBodyForApiMode(agent.apiMode, payload);
+    return this.buildResponseRequestBodyForApiMode(agent.apiMode, {
+      ...payload,
+      ollamaOptions: agent?.testModeConfig?.ollamaOptions || null,
+    });
   }
 
   memoryModelName(agent, apiMode = agent.apiMode) {
@@ -103,6 +119,7 @@ class ModelGateway {
       input,
       messages,
       temperature: temperature ?? agent.temperature,
+      ollamaOptions: agent?.testModeConfig?.ollamaOptions || null,
     });
     const resp = await fetch(this.endpointUrl(requestConfig), {
       method: "POST",

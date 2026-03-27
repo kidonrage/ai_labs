@@ -53,13 +53,26 @@
               <span>Настройки чата</span>
             </button>
 
-            <button id="runRagBatch" class="btn secondary" type="button">
-              Экспорт тестов RAG в Markdown
+            <button id="runLlmConfigTest" class="btn secondary" type="button">
+              Run LLM config test
             </button>
           </div>
         </div>
 
-        <div id="batchRunStatus" class="batch-run-status" aria-live="polite" hidden></div>
+        <div class="batch-run-bar">
+          <div id="llmConfigTestStatus" class="batch-run-status" aria-live="polite">
+            Status: idle
+          </div>
+          <button
+            id="downloadLlmConfigTestReport"
+            class="btn secondary"
+            type="button"
+            hidden
+            disabled
+          >
+            Download markdown report
+          </button>
+        </div>
       </header>
 
       <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsDialogTitle">

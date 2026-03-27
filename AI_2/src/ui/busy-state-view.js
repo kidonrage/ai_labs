@@ -7,7 +7,7 @@ class BusyStateView {
       "profileMenuTrigger", "openSettings", "input", "model", "temperature", "baseUrl",
       "ragEnabled", "ragRetrievalMode", "ragEmbeddingBaseUrl", "summaryBaseUrl",
       "pauseTask", "continueTask", "invariantSelect", "addInvariant", "removeInvariant",
-      "runRagBatch",
+      "runLlmConfigTest", "downloadLlmConfigTestReport",
     ];
     for (const id of ids) {
       const el = $(id);

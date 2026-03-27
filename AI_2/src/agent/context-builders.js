@@ -33,6 +33,16 @@ function buildInvariantPolicy(invariants) {
     : "Соблюдай системные ограничения, если они присутствуют в контексте.";
 }
 
+function resolveSystemPreamble(agent) {
+  const override =
+    agent &&
+    agent.testModeConfig &&
+    typeof agent.testModeConfig.systemPreamble === "string"
+      ? agent.testModeConfig.systemPreamble.trim()
+      : "";
+  return override || String(agent.systemPreamble || "").trim();
+}
+
 function buildPromptContract(agent, nextUserText, runtimeContext = null) {
   const keepLast = Math.max(1, Number(agent.contextPolicy.keepLastMessages) || 12);
   const tail = agent.history.slice(-keepLast);
@@ -64,7 +74,7 @@ function buildPromptContract(agent, nextUserText, runtimeContext = null) {
   }
 
   const systemDirectives = [
-    String(agent.systemPreamble || "").trim(),
+    resolveSystemPreamble(agent),
     buildProfilePriorityInstructions(agent.userProfile),
     buildInvariantPolicy(agent.invariants),
   ].filter(Boolean);

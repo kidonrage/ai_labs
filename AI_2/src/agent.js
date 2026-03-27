@@ -63,6 +63,7 @@ export class Agent {
       summaryTotals: makeDefaultSummaryTotals(),
       contextPolicy: makeDefaultContextPolicy(),
       systemPreamble: "Ты полезный ассистент. Отвечай кратко и по делу, если не просят иначе.",
+      testModeConfig: null,
       plannerPrompt: "Собери короткий draft-план ответа на запрос, учитывая memory/task state/invariants. Переход между этапами задачи возможен только после явной команды пользователя approve.",
       invariantCheckerPrompt: "Проверь draft-план и запрос на конфликты с инвариантами. Любой конфликт означает отказ.",
       finalResponderPrompt: "Сформируй финальный ответ только в рамках инвариантов и активного профиля пользователя. Не инициируй переход к следующему этапу без явного разрешения пользователя.",
@@ -96,6 +97,8 @@ export class Agent {
   setLongTermMemory(value) { this.longTermMemory = normalizeLongTermMemory(value); this._emitStateChanged(); }
   setInvariants(value) { this.invariants = normalizeInvariants(value, { mergeWithDefaults: false }); this._emitStateChanged(); }
   setUserProfile(profile) { this.userProfile = normalizeUserProfile(profile); this._emitStateChanged(); }
+  setTestModeConfig(config) { this.testModeConfig = config && typeof config === "object" ? { ...config } : null; }
+  clearTestModeConfig() { this.testModeConfig = null; }
 
   setRagConfig(patch) {
     const next = patch && typeof patch === "object" ? patch : {};
