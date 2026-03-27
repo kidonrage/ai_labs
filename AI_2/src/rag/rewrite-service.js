@@ -1,5 +1,4 @@
 import {
-  API_MODES,
   endpointForApiMode,
   isOllamaFamilyMode,
   normalizeApiMode,
@@ -44,9 +43,8 @@ async function rewriteQuery(question, options = {}) {
   }
   try {
     const body = isOllamaFamilyMode(apiMode)
-      ? { model, messages: [{ role: "user", content: buildRewritePrompt(originalQuestion) }], stream: false, options: { temperature } }
+      ? { model, messages: [{ role: "user", content: buildRewritePrompt(originalQuestion) }], stream: false, options: { temperature }, think: false }
       : { model, input: buildRewritePrompt(originalQuestion), temperature };
-    if (apiMode === API_MODES.OLLAMA_TOOLS_CHAT) body.think = false;
     const response = await fetch(baseUrl, { method: "POST", headers, body: JSON.stringify(body) });
     if (!response.ok) return originalQuestion;
     const data = await response.json();

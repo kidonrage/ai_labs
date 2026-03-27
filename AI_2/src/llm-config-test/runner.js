@@ -118,6 +118,7 @@ function createDetachedAgent(sourceAgent, config) {
     systemPreamble: LLM_TEST_SYSTEM_PROMPT,
     disableMemoryUpdate: true,
     ignoreMemoryErrors: true,
+    allowThinkingAsAnswer: true,
     ollamaOptions: {
       num_predict: config.maxTokens,
       num_ctx: config.contextWindow,
@@ -164,9 +165,10 @@ class LlmConfigTestRunner {
           : typeof answerResult?.answer === "string"
             ? answerResult.answer
             : "";
+      if (response?.warningMessage) result.warningMessage = response.warningMessage;
       result.sources = normalizeSources(answerResult);
       result.rawResponsePreview = previewText(
-        answerResult?.rawResponsePreview || answerResult?.rawResponseText || response?.rawResponsePreview || "",
+        response?.rawResponsePreview || answerResult?.rawResponsePreview || answerResult?.rawResponseText || "",
         500,
       );
       if (softFailure) {

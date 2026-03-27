@@ -12,6 +12,15 @@ function pickFirstText(...values) {
   return null;
 }
 
+function extractOllamaThinkingText(dto) {
+  return pickFirstText(
+    dto?.message?.thinking,
+    dto?.thinking,
+    dto?.choices?.[0]?.message?.thinking,
+    dto?.choices?.[0]?.delta?.thinking,
+  );
+}
+
 function collectTextFromContent(content, parts = []) {
   if (typeof content === "string") {
     const text = normalizeText(content);
@@ -31,7 +40,7 @@ function collectTextFromContent(content, parts = []) {
   return parts;
 }
 
-function extractOllamaAnswerText(dto) {
+function extractOllamaContentText(dto) {
   return pickFirstText(
     dto?.message?.content,
     dto?.response,
@@ -39,6 +48,18 @@ function extractOllamaAnswerText(dto) {
     dto?.choices?.[0]?.message?.content,
     dto?.choices?.[0]?.delta?.content,
   );
+}
+
+function extractOllamaResponseDetails(dto, options = {}) {
+  const contentText = extractOllamaContentText(dto);
+  const thinkingText = extractOllamaThinkingText(dto);
+  const allowThinkingFallback = Boolean(options.allowThinkingFallback);
+  return {
+    contentText,
+    thinkingText,
+    usedThinkingFallback: !contentText && Boolean(thinkingText) && allowThinkingFallback,
+    answerText: contentText || (allowThinkingFallback ? thinkingText : null),
+  };
 }
 
 function extractResponsesAnswerText(dto) {
@@ -58,9 +79,9 @@ function extractResponsesAnswerText(dto) {
   return parts.join("\n").trim() || null;
 }
 
-function extractAnswerText(dto, apiMode = API_MODES.PROXYAPI_RESPONSES) {
+function extractAnswerText(dto, apiMode = API_MODES.PROXYAPI_RESPONSES, options = {}) {
   if (isOllamaFamilyMode(apiMode)) {
-    return extractOllamaAnswerText(dto);
+    return extractOllamaResponseDetails(dto, options).answerText;
   }
   return extractResponsesAnswerText(dto);
 }
@@ -76,8 +97,8 @@ function extractToolCallNames(dto) {
   return names;
 }
 
-function extractUserVisibleAnswer(dto, apiMode = API_MODES.PROXYAPI_RESPONSES) {
-  if (isOllamaFamilyMode(apiMode)) return extractAnswerText(dto, apiMode);
+function extractUserVisibleAnswer(dto, apiMode = API_MODES.PROXYAPI_RESPONSES, options = {}) {
+  if (isOllamaFamilyMode(apiMode)) return extractAnswerText(dto, apiMode, options);
   const parts = [];
   const toolCallNames = extractToolCallNames(dto);
   const answerText = extractAnswerText(dto, apiMode);
@@ -88,7 +109,8 @@ function extractUserVisibleAnswer(dto, apiMode = API_MODES.PROXYAPI_RESPONSES) {
 
 function buildRawResponsePreview(dto, maxLength = 500) {
   const text = extractUserVisibleAnswer(dto, API_MODES.PROXYAPI_RESPONSES)
-    || extractOllamaAnswerText(dto)
+    || extractOllamaContentText(dto)
+    || extractOllamaThinkingText(dto)
     || (() => {
       try {
         return JSON.stringify(dto);
@@ -112,6 +134,7 @@ function extractDurationSeconds(dto, apiMode = API_MODES.PROXYAPI_RESPONSES) {
 
 export {
   extractAnswerText,
+  extractOllamaResponseDetails,
   buildRawResponsePreview,
   extractDurationSeconds,
   extractToolCallNames,

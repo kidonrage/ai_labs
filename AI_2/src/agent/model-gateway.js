@@ -9,6 +9,7 @@ import { normalizeUsage } from "../helpers.js";
 import { OpenAIModelPricing } from "../pricing.js";
 import {
   extractAnswerText,
+  extractOllamaResponseDetails,
   buildRawResponsePreview,
   extractDurationSeconds,
   extractUserVisibleAnswer,
@@ -18,7 +19,7 @@ function mergeOllamaOptions(temperature, extraOptions = null) {
   const options = { temperature: Number(temperature) };
   const raw = extraOptions && typeof extraOptions === "object" ? extraOptions : {};
   for (const [key, value] of Object.entries(raw)) {
-    if (value == null) continue;
+    if (value == null || key === "thinking" || key === "think") continue;
     options[key] = value;
   }
   return options;
@@ -74,8 +75,8 @@ class ModelGateway {
             : [{ role: "user", content: String(input || "") }],
         stream: false,
         options: mergeOllamaOptions(temperature, ollamaOptions),
+        think: false,
       };
-      if (apiMode === "ollama_tools_chat") body.think = false;
       return body;
     }
     return { model, input, temperature: Number(temperature) };
@@ -157,8 +158,18 @@ class ModelGateway {
         rawResponsePreview: "",
       });
     }
-    const answerText = extractUserVisibleAnswer(dto, requestConfig.apiMode);
+    const allowThinkingFallback = Boolean(agent?.testModeConfig?.allowThinkingAsAnswer);
+    const ollamaDetails = isOllamaFamilyMode(requestConfig.apiMode)
+      ? extractOllamaResponseDetails(dto, { allowThinkingFallback })
+      : null;
+    const answerText = isOllamaFamilyMode(requestConfig.apiMode)
+      ? ollamaDetails?.answerText || null
+      : extractUserVisibleAnswer(dto, requestConfig.apiMode);
     const rawResponsePreview = buildRawResponsePreview(dto);
+    const warningMessage =
+      ollamaDetails?.usedThinkingFallback
+        ? "model_returned_thinking_instead_of_content"
+        : null;
     if (!answerText) {
       throw makeTypedError("Пустой ответ: не удалось извлечь текст из ответа модели.", {
         errorType: "response_parse_error",
@@ -191,12 +202,13 @@ class ModelGateway {
       dto,
       apiMode: requestConfig.apiMode,
       rawResponsePreview,
+      warningMessage,
     };
   }
 
   async runTaskLLMStep(agent, input) {
     const completion = await this.requestModelText(agent, { input });
-    const answerText = extractAnswerText(completion.dto, completion.apiMode);
+    const answerText = completion.answerText || extractAnswerText(completion.dto, completion.apiMode);
     if (!answerText) {
       throw makeTypedError("Пустой ответ: не удалось извлечь текст из ответа модели.", {
         errorType: "response_parse_error",
