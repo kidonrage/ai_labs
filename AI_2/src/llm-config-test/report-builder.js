@@ -6,6 +6,11 @@ function formatIso(value) {
   return Number.isNaN(date.getTime()) ? "n/a" : date.toISOString();
 }
 
+function formatBlock(label, value, emptyValue = "none") {
+  const text = String(value || "").trim();
+  return `${label}: ${text || emptyValue}`;
+}
+
 function formatSources(sources) {
   const list = Array.isArray(sources) ? sources : [];
   if (list.length === 0) return "- Sources: none";
@@ -15,6 +20,19 @@ function formatSources(sources) {
       (source) =>
         `  - ${source.source || "unknown"} | ${source.section || "unknown"} | ${source.chunk_id || "unknown"}`,
     ),
+  ].join("\n");
+}
+
+function formatRetrievedChunks(run) {
+  const list = Array.isArray(run?.retrievedChunksPreview) ? run.retrievedChunksPreview : [];
+  const count = Number.isFinite(run?.retrievedChunkCount) ? run.retrievedChunkCount : 0;
+  if (list.length === 0) return `- Retrieved chunks preview: none (count: ${count})`;
+  return [
+    `- Retrieved chunks preview (count: ${count}):`,
+    ...list.map((chunk) => {
+      const similarity = Number.isFinite(chunk.similarity) ? chunk.similarity.toFixed(4) : "n/a";
+      return `  - ${chunk.chunkId} | ${chunk.source} | ${chunk.section} | similarity: ${similarity} | ${chunk.preview || "no preview"}`;
+    }),
   ].join("\n");
 }
 
@@ -79,13 +97,18 @@ class LlmConfigTestReportBuilder {
       for (const run of runs) {
         lines.push(
           `### ${run.questionId}`,
+          `- Config: ${run.configName}`,
           `- Question: ${run.questionText}`,
           `- Started at: ${formatIso(run.startedAt)}`,
           `- Finished at: ${formatIso(run.finishedAt)}`,
           `- Duration: ${run.durationMs} ms`,
           formatSources(run.sources),
-          `- Error: ${run.error ? normalizeRunError(run.error) : "none"}`,
-          "- Answer:",
+          formatRetrievedChunks(run),
+          `- ${formatBlock("Error type", run.errorType)}`,
+          `- ${formatBlock("Error message", run.errorMessage ? normalizeRunError(run.errorMessage) : "", "none")}`,
+          `- ${formatBlock("Warning message", run.warningMessage)}`,
+          `- ${formatBlock("Raw response preview", run.rawResponsePreview)}`,
+          "- Final answer:",
           "",
           run.answerText || "(empty answer)",
           "",

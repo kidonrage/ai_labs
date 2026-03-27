@@ -64,6 +64,7 @@ export class Agent {
       contextPolicy: makeDefaultContextPolicy(),
       systemPreamble: "Ты полезный ассистент. Отвечай кратко и по делу, если не просят иначе.",
       testModeConfig: null,
+      lastTestWarning: null,
       plannerPrompt: "Собери короткий draft-план ответа на запрос, учитывая memory/task state/invariants. Переход между этапами задачи возможен только после явной команды пользователя approve.",
       invariantCheckerPrompt: "Проверь draft-план и запрос на конфликты с инвариантами. Любой конфликт означает отказ.",
       finalResponderPrompt: "Сформируй финальный ответ только в рамках инвариантов и активного профиля пользователя. Не инициируй переход к следующему этапу без явного разрешения пользователя.",
@@ -157,7 +158,19 @@ export class Agent {
   async send(userText) {
     if (requiresAuthorization(this.apiMode) && !this.apiKey) throw new Error("API key пустой.");
     if (!userText.trim()) throw new Error("Пустое сообщение.");
-    await this._updateMemoryWithLLM(userText);
+    this.lastTestWarning = null;
+    if (!this.testModeConfig?.disableMemoryUpdate) {
+      try {
+        await this._updateMemoryWithLLM(userText);
+      } catch (error) {
+        if (!this.testModeConfig?.ignoreMemoryErrors) throw error;
+        const message =
+          error && typeof error.message === "string" && error.message.trim()
+            ? error.message.trim()
+            : String(error);
+        this.lastTestWarning = { errorType: "memory_error", message };
+      }
+    }
     const decision = this._computeInvariantDecision(userText);
     this.lastInvariantCheck = decision.invariantCheck;
     const userMsg = { role: "user", text: userText, at: new Date().toISOString() };

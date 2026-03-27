@@ -9,6 +9,7 @@ import { normalizeUsage } from "../helpers.js";
 import { OpenAIModelPricing } from "../pricing.js";
 import {
   extractAnswerText,
+  buildRawResponsePreview,
   extractDurationSeconds,
   extractUserVisibleAnswer,
 } from "./answer-extractors.js";
@@ -21,6 +22,10 @@ function mergeOllamaOptions(temperature, extraOptions = null) {
     options[key] = value;
   }
   return options;
+}
+
+function makeTypedError(message, fields = {}) {
+  return Object.assign(new Error(message), fields);
 }
 
 class ModelGateway {
@@ -128,11 +133,39 @@ class ModelGateway {
     });
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
-      throw new Error(`HTTP ${resp.status}: ${text || resp.statusText}`);
+      throw makeTypedError(`HTTP ${resp.status}: ${text || resp.statusText}`, {
+        errorType: "model_call_error",
+        rawResponsePreview: buildRawResponsePreview(text || resp.statusText),
+      });
     }
-    const dto = await resp.json();
+    let dto = null;
+    if (typeof resp.text === "function") {
+      const responseText = await resp.text();
+      try {
+        dto = JSON.parse(responseText);
+      } catch {
+        throw makeTypedError("Ответ модели не является валидным JSON.", {
+          errorType: "response_parse_error",
+          rawResponsePreview: buildRawResponsePreview(responseText),
+        });
+      }
+    } else if (typeof resp.json === "function") {
+      dto = await resp.json();
+    } else {
+      throw makeTypedError("Ответ модели не содержит json/text body.", {
+        errorType: "response_parse_error",
+        rawResponsePreview: "",
+      });
+    }
     const answerText = extractUserVisibleAnswer(dto, requestConfig.apiMode);
-    if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
+    const rawResponsePreview = buildRawResponsePreview(dto);
+    if (!answerText) {
+      throw makeTypedError("Пустой ответ: не удалось извлечь текст из ответа модели.", {
+        errorType: "response_parse_error",
+        rawResponsePreview,
+        dto,
+      });
+    }
     const usage = normalizeUsage(dto);
     const durationSeconds = extractDurationSeconds(dto, requestConfig.apiMode);
     const modelName = dto.model || body.model;
@@ -149,13 +182,28 @@ class ModelGateway {
         durationSeconds: durationSeconds != null ? durationSeconds : undefined,
       });
     }
-    return { answerText, usage, durationSeconds, modelName, costRub, dto, apiMode: requestConfig.apiMode };
+    return {
+      answerText,
+      usage,
+      durationSeconds,
+      modelName,
+      costRub,
+      dto,
+      apiMode: requestConfig.apiMode,
+      rawResponsePreview,
+    };
   }
 
   async runTaskLLMStep(agent, input) {
     const completion = await this.requestModelText(agent, { input });
     const answerText = extractAnswerText(completion.dto, completion.apiMode);
-    if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
+    if (!answerText) {
+      throw makeTypedError("Пустой ответ: не удалось извлечь текст из ответа модели.", {
+        errorType: "response_parse_error",
+        rawResponsePreview: completion.rawResponsePreview || "",
+        dto: completion.dto,
+      });
+    }
     return answerText;
   }
 
