@@ -1,9 +1,9 @@
 import {
+  authorizationHeaderForRequest,
   defaultModelForApiMode,
   endpointForApiMode,
   inferApiMode,
   isOllamaFamilyMode,
-  requiresAuthorization,
 } from "../api-profiles.js";
 import { normalizeUsage } from "../helpers.js";
 import { OpenAIModelPricing } from "../pricing.js";
@@ -55,10 +55,12 @@ class ModelGateway {
 
   requestHeaders(requestConfig) {
     const headers = { "Content-Type": "application/json" };
-    if (requiresAuthorization(requestConfig.apiMode)) {
-      if (!requestConfig.apiKey) throw new Error("API key пустой.");
-      headers.Authorization = `Bearer ${requestConfig.apiKey}`;
-    }
+    const authorization = authorizationHeaderForRequest(
+      requestConfig.apiMode,
+      requestConfig.baseUrl,
+      requestConfig.apiKey,
+    );
+    if (authorization) headers.Authorization = authorization;
     return headers;
   }
 

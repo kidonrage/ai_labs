@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { Agent } from "../agent.js";
+import { setRuntimePrivateConfig } from "../private-runtime-config.js";
 
 async function main() {
+  setRuntimePrivateConfig({
+    remoteOllama: {
+      username: "king",
+      password: "king",
+    },
+  });
   const agent = new Agent({
     apiMode: "ollama_chat",
     baseUrl: "http://localhost:11434",
@@ -172,6 +179,49 @@ async function main() {
   assert.equal(summaryCalls[0].url, "http://localhost:11434/api/chat");
   assert.equal(summaryCalls[0].body.model, "gemma3");
   assert.equal(summaryCalls[0].headers.Authorization, undefined);
+
+  const remoteAgent = new Agent({
+    apiMode: "remote_ollama_chat",
+    baseUrl: "http://185.28.85.134",
+    apiKey: "",
+    model: "gemma3",
+    temperature: 0.2,
+  });
+  assert.equal(remoteAgent.exportState().config.apiMode, "remote_ollama_chat");
+
+  const remoteCalls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    remoteCalls.push({
+      url,
+      headers: options.headers || {},
+      body: JSON.parse(options.body),
+    });
+    return {
+      ok: true,
+      text: async () => JSON.stringify({
+        model: "gemma3",
+        message: {
+          role: "assistant",
+          content: "удалённый ответ",
+        },
+        prompt_eval_count: 3,
+        eval_count: 2,
+      }),
+    };
+  };
+  try {
+    const remoteResult = await remoteAgent.modelGateway.requestModelText(remoteAgent, {
+      input: "ping",
+    });
+    assert.equal(remoteResult.answerText, "удалённый ответ");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(remoteCalls.length, 1);
+  assert.equal(remoteCalls[0].url, "http://185.28.85.134/api/chat");
+  assert.equal(remoteCalls[0].headers.Authorization, "Basic a2luZzpraW5n");
+  assert.equal(remoteCalls[0].body.messages[0].content, "ping");
 }
 
 main();

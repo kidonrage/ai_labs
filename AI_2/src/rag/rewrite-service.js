@@ -1,8 +1,8 @@
 import {
+  authorizationHeaderForRequest,
   endpointForApiMode,
   isOllamaFamilyMode,
   normalizeApiMode,
-  requiresAuthorization,
 } from "../api-profiles.js";
 import {
   DEFAULT_REWRITE_API_MODE,
@@ -36,10 +36,11 @@ async function rewriteQuery(question, options = {}) {
     DEFAULT_REWRITE_TEMPERATURE,
   );
   const headers = { "Content-Type": "application/json" };
-  if (requiresAuthorization(apiMode)) {
-    const apiKey = typeof options.apiKey === "string" ? options.apiKey.trim() : "";
-    if (!apiKey) return originalQuestion;
-    headers.Authorization = `Bearer ${apiKey}`;
+  try {
+    const authorization = authorizationHeaderForRequest(apiMode, baseUrl, options.apiKey);
+    if (authorization) headers.Authorization = authorization;
+  } catch {
+    return originalQuestion;
   }
   try {
     const body = isOllamaFamilyMode(apiMode)
