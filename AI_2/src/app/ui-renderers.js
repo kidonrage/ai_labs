@@ -27,14 +27,17 @@ function renderChatList(chats, activeChatId) {
   list.innerHTML = "";
   for (const chat of [...chats].reverse()) {
     const item = document.createElement("button");
+    const title = document.createElement("span");
+    const subtitle = document.createElement("span");
     item.type = "button";
     item.className = `chat-list-item${chat.id === activeChatId ? " active" : ""}`;
     item.dataset.chatId = chat.id;
     item.dataset.chatAction = "select";
-    item.innerHTML = `
-      <span class="chat-list-title">${chat.title}</span>
-      <span class="chat-list-subtitle">${makeChatSubtitle(chat)}</span>
-    `;
+    title.className = "chat-list-title";
+    title.textContent = String(chat.title || "").trim() || "Без названия";
+    subtitle.className = "chat-list-subtitle";
+    subtitle.textContent = makeChatSubtitle(chat);
+    item.append(title, subtitle);
     list.appendChild(item);
   }
   $("deleteChat").disabled = chats.length <= 1;
