@@ -13,7 +13,7 @@ import {
 async function main() {
   setRuntimePrivateConfig({
     remoteOllama: {
-      username: "king",
+      login: "king",
       password: "king",
     },
   });

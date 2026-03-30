@@ -1,4 +1,5 @@
 const EMPTY_REMOTE_OLLAMA = Object.freeze({
+  login: "",
   username: "",
   password: "",
 });
@@ -9,7 +10,7 @@ let runtimePrivateConfig = {
 };
 
 function normalizeString(value) {
-  return typeof value === "string" ? value.trim() : "";
+  return typeof value === "string" ? value : "";
 }
 
 function normalizePrivateConfig(value) {
@@ -21,6 +22,7 @@ function normalizePrivateConfig(value) {
   return {
     apiKey: normalizeString(raw.apiKey),
     remoteOllama: {
+      login: normalizeString(remoteOllama.login),
       username: normalizeString(remoteOllama.username),
       password: normalizeString(remoteOllama.password),
     },
@@ -31,20 +33,15 @@ function setRuntimePrivateConfig(value) {
   runtimePrivateConfig = normalizePrivateConfig(value);
 }
 
-function encodeBase64(value) {
-  if (typeof globalThis.btoa === "function") return globalThis.btoa(value);
-  if (typeof Buffer !== "undefined") return Buffer.from(value, "utf8").toString("base64");
-  throw new Error("Нет base64-кодировщика для private config.");
-}
-
 function getRemoteOllamaAuthorizationHeader() {
-  const username = normalizeString(runtimePrivateConfig.remoteOllama.username);
+  const login = normalizeString(
+    runtimePrivateConfig.remoteOllama.login ||
+      runtimePrivateConfig.remoteOllama.username,
+  );
   const password = normalizeString(runtimePrivateConfig.remoteOllama.password);
-  if (!username || !password) return "";
-  return `Basic ${encodeBase64(`${username}:${password}`)}`;
+  if (!login || !password) return "";
+  const credentials = btoa(`${login}:${password}`);
+  return `Basic ${credentials}`;
 }
 
-export {
-  getRemoteOllamaAuthorizationHeader,
-  setRuntimePrivateConfig,
-};
+export { getRemoteOllamaAuthorizationHeader, setRuntimePrivateConfig };

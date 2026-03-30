@@ -5,7 +5,7 @@ import { setRuntimePrivateConfig } from "../private-runtime-config.js";
 async function main() {
   setRuntimePrivateConfig({
     remoteOllama: {
-      username: "king",
+      login: "king",
       password: "king",
     },
   });
