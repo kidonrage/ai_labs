@@ -1,17 +1,33 @@
 import {
+  authorizationHeaderForRequest,
   defaultModelForApiMode,
   endpointForApiMode,
   inferApiMode,
   isOllamaFamilyMode,
-  requiresAuthorization,
 } from "../api-profiles.js";
 import { normalizeUsage } from "../helpers.js";
 import { OpenAIModelPricing } from "../pricing.js";
 import {
   extractAnswerText,
+  extractOllamaResponseDetails,
+  buildRawResponsePreview,
   extractDurationSeconds,
   extractUserVisibleAnswer,
 } from "./answer-extractors.js";
+
+function mergeOllamaOptions(temperature, extraOptions = null) {
+  const options = { temperature: Number(temperature) };
+  const raw = extraOptions && typeof extraOptions === "object" ? extraOptions : {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (value == null || key === "thinking" || key === "think") continue;
+    options[key] = value;
+  }
+  return options;
+}
+
+function makeTypedError(message, fields = {}) {
+  return Object.assign(new Error(message), fields);
+}
 
 class ModelGateway {
   resolveRequestConfig(
@@ -39,14 +55,19 @@ class ModelGateway {
 
   requestHeaders(requestConfig) {
     const headers = { "Content-Type": "application/json" };
-    if (requiresAuthorization(requestConfig.apiMode)) {
-      if (!requestConfig.apiKey) throw new Error("API key пустой.");
-      headers.Authorization = `Bearer ${requestConfig.apiKey}`;
-    }
+    const authorization = authorizationHeaderForRequest(
+      requestConfig.apiMode,
+      requestConfig.baseUrl,
+      requestConfig.apiKey,
+    );
+    if (authorization) headers.Authorization = authorization;
     return headers;
   }
 
-  buildResponseRequestBodyForApiMode(apiMode, { model, input, temperature, messages = null }) {
+  buildResponseRequestBodyForApiMode(
+    apiMode,
+    { model, input, temperature, messages = null, ollamaOptions = null },
+  ) {
     if (isOllamaFamilyMode(apiMode)) {
       const body = {
         model,
@@ -55,16 +76,19 @@ class ModelGateway {
             ? messages
             : [{ role: "user", content: String(input || "") }],
         stream: false,
-        options: { temperature: Number(temperature) },
+        options: mergeOllamaOptions(temperature, ollamaOptions),
+        think: false,
       };
-      if (apiMode === "ollama_tools_chat") body.think = false;
       return body;
     }
     return { model, input, temperature: Number(temperature) };
   }
 
   buildResponseRequestBody(agent, payload) {
-    return this.buildResponseRequestBodyForApiMode(agent.apiMode, payload);
+    return this.buildResponseRequestBodyForApiMode(agent.apiMode, {
+      ...payload,
+      ollamaOptions: agent?.testModeConfig?.ollamaOptions || null,
+    });
   }
 
   memoryModelName(agent, apiMode = agent.apiMode) {
@@ -103,6 +127,7 @@ class ModelGateway {
       input,
       messages,
       temperature: temperature ?? agent.temperature,
+      ollamaOptions: agent?.testModeConfig?.ollamaOptions || null,
     });
     const resp = await fetch(this.endpointUrl(requestConfig), {
       method: "POST",
@@ -111,11 +136,49 @@ class ModelGateway {
     });
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
-      throw new Error(`HTTP ${resp.status}: ${text || resp.statusText}`);
+      throw makeTypedError(`HTTP ${resp.status}: ${text || resp.statusText}`, {
+        errorType: "model_call_error",
+        rawResponsePreview: buildRawResponsePreview(text || resp.statusText),
+      });
     }
-    const dto = await resp.json();
-    const answerText = extractUserVisibleAnswer(dto, requestConfig.apiMode);
-    if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
+    let dto = null;
+    if (typeof resp.text === "function") {
+      const responseText = await resp.text();
+      try {
+        dto = JSON.parse(responseText);
+      } catch {
+        throw makeTypedError("Ответ модели не является валидным JSON.", {
+          errorType: "response_parse_error",
+          rawResponsePreview: buildRawResponsePreview(responseText),
+        });
+      }
+    } else if (typeof resp.json === "function") {
+      dto = await resp.json();
+    } else {
+      throw makeTypedError("Ответ модели не содержит json/text body.", {
+        errorType: "response_parse_error",
+        rawResponsePreview: "",
+      });
+    }
+    const allowThinkingFallback = Boolean(agent?.testModeConfig?.allowThinkingAsAnswer);
+    const ollamaDetails = isOllamaFamilyMode(requestConfig.apiMode)
+      ? extractOllamaResponseDetails(dto, { allowThinkingFallback })
+      : null;
+    const answerText = isOllamaFamilyMode(requestConfig.apiMode)
+      ? ollamaDetails?.answerText || null
+      : extractUserVisibleAnswer(dto, requestConfig.apiMode);
+    const rawResponsePreview = buildRawResponsePreview(dto);
+    const warningMessage =
+      ollamaDetails?.usedThinkingFallback
+        ? "model_returned_thinking_instead_of_content"
+        : null;
+    if (!answerText) {
+      throw makeTypedError("Пустой ответ: не удалось извлечь текст из ответа модели.", {
+        errorType: "response_parse_error",
+        rawResponsePreview,
+        dto,
+      });
+    }
     const usage = normalizeUsage(dto);
     const durationSeconds = extractDurationSeconds(dto, requestConfig.apiMode);
     const modelName = dto.model || body.model;
@@ -132,13 +195,29 @@ class ModelGateway {
         durationSeconds: durationSeconds != null ? durationSeconds : undefined,
       });
     }
-    return { answerText, usage, durationSeconds, modelName, costRub, dto, apiMode: requestConfig.apiMode };
+    return {
+      answerText,
+      usage,
+      durationSeconds,
+      modelName,
+      costRub,
+      dto,
+      apiMode: requestConfig.apiMode,
+      rawResponsePreview,
+      warningMessage,
+    };
   }
 
   async runTaskLLMStep(agent, input) {
     const completion = await this.requestModelText(agent, { input });
-    const answerText = extractAnswerText(completion.dto, completion.apiMode);
-    if (!answerText) throw new Error("Пустой ответ: не нашёл output_text.");
+    const answerText = completion.answerText || extractAnswerText(completion.dto, completion.apiMode);
+    if (!answerText) {
+      throw makeTypedError("Пустой ответ: не удалось извлечь текст из ответа модели.", {
+        errorType: "response_parse_error",
+        rawResponsePreview: completion.rawResponsePreview || "",
+        dto: completion.dto,
+      });
+    }
     return answerText;
   }
 

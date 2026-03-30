@@ -53,13 +53,26 @@
               <span>Настройки чата</span>
             </button>
 
-            <button id="runRagBatch" class="btn secondary" type="button">
-              Экспорт тестов RAG в Markdown
+            <button id="runLlmConfigTest" class="btn secondary" type="button">
+              Run LLM config test
             </button>
           </div>
         </div>
 
-        <div id="batchRunStatus" class="batch-run-status" aria-live="polite" hidden></div>
+        <div class="batch-run-bar">
+          <div id="llmConfigTestStatus" class="batch-run-status" aria-live="polite">
+            Status: idle
+          </div>
+          <button
+            id="downloadLlmConfigTestReport"
+            class="btn secondary"
+            type="button"
+            hidden
+            disabled
+          >
+            Download markdown report
+          </button>
+        </div>
       </header>
 
       <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsDialogTitle">
@@ -89,6 +102,7 @@
                 <select id="apiMode">
                   <option value="proxyapi_responses">ProxyAPI Responses</option>
                   <option value="ollama_chat">Ollama Chat</option>
+                  <option value="remote_ollama_chat">Remote Ollama</option>
                   <option value="ollama_tools_chat">Ollama + MCP</option>
                 </select>
               </label>
@@ -109,6 +123,7 @@
                   <option value="gpt-5.2">gpt-5.2</option>
                   <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
                   <option value="gemma3">gemma3</option>
+                  <option value="qwen3:1.7b">qwen3:1.7b</option>
                   <option value="qwen3:8b">qwen3:8b</option>
                 </select>
               </label>

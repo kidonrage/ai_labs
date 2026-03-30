@@ -3,12 +3,17 @@ import { addMessage, setBusy } from "../ui.js";
 import { ChatRepository } from "./chat-repository.js";
 import { ChatSessionController } from "./chat-session-controller.js";
 import { ComposerController } from "./composer-controller.js";
+import { LlmConfigTestController } from "./llm-config-test-controller.js";
 import { getPrivateApiKey, loadPrivateConfig } from "./private-config.js";
 import { ProfileRegistry } from "./profile-registry.js";
 import { promptInvariantDraft, promptProfileDraft } from "./prompts.js";
 import { buildRagConfigFromUi, populateRagModeSelect, syncRagModeVisibility } from "./rag-config.js";
-import { RagBatchController } from "./rag-batch-controller.js";
-import { renderChatList, renderInvariantControls, renderProfileMenu } from "./ui-renderers.js";
+import {
+  renderChatList,
+  renderInvariantControls,
+  renderProfileMenu,
+  setLlmConfigTestStatus,
+} from "./ui-renderers.js";
 import { $, clonePlain } from "./utils.js";
 import { WorkspaceStore } from "./workspace-store.js";
 
@@ -22,7 +27,7 @@ class AppController {
   constructor(privateConfig) {
     this.privateApiKey = getPrivateApiKey(privateConfig);
     this.isSending = false;
-    this.isBatchRunning = false;
+    this.isLlmConfigTestRunning = false;
     populateRagModeSelect();
     this.fallbackConfig = {
       apiMode: inferApiMode($("apiMode").value, $("baseUrl").value),
@@ -44,16 +49,16 @@ class AppController {
       setSending: (value) => this.setSending(value),
       renderWorkspaceChrome: () => this.renderWorkspaceChrome(),
     });
-    this.ragBatch = new RagBatchController({
+    this.llmConfigTest = new LlmConfigTestController({
       session: this.session,
       isUiBusy: () => this.isUiBusy(),
-      setBatchRunning: (value) => this.setBatchRunning(value),
+      setTestRunning: (value) => this.setLlmConfigTestRunning(value),
     });
   }
 
-  isUiBusy() { return this.isSending || this.isBatchRunning; }
+  isUiBusy() { return this.isSending || this.isLlmConfigTestRunning; }
   setSending(value) { this.isSending = value; setBusy(this.isUiBusy()); }
-  setBatchRunning(value) { this.isBatchRunning = value; setBusy(this.isUiBusy()); }
+  setLlmConfigTestRunning(value) { this.isLlmConfigTestRunning = value; setBusy(this.isUiBusy()); }
   syncComposerOffset() {
     const composer = document.querySelector(".composer");
     if (!(composer instanceof HTMLElement)) return;
@@ -95,6 +100,7 @@ class AppController {
         : "Привет! Можно создавать несколько независимых чатов, переключаться между ними, и они сохраняются в localStorage.",
       meta: { statsLines: [] },
     });
+    setLlmConfigTestStatus("idle");
     this.bindEvents();
     if (typeof ResizeObserver === "function") {
       const composer = document.querySelector(".composer");
@@ -133,7 +139,8 @@ class AppController {
     $("closeSettings").addEventListener("click", () => this.closeSettingsDialog());
     $("settingsDialog").addEventListener("cancel", () => { if ($("profileMenu")) $("profileMenu").open = false; });
     $("settingsDialog").addEventListener("click", (e) => { if (e.target === $("settingsDialog")) this.closeSettingsDialog(); });
-    $("runRagBatch").addEventListener("click", () => this.ragBatch.handleRun());
+    $("runLlmConfigTest").addEventListener("click", () => this.llmConfigTest.handleRun());
+    $("downloadLlmConfigTestReport").addEventListener("click", () => this.llmConfigTest.handleDownload());
     $("chatList").addEventListener("click", (e) => {
       const target = e.target;
       if (!(target instanceof HTMLElement)) return;

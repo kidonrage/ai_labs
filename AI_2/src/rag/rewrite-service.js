@@ -1,9 +1,8 @@
 import {
-  API_MODES,
+  authorizationHeaderForRequest,
   endpointForApiMode,
   isOllamaFamilyMode,
   normalizeApiMode,
-  requiresAuthorization,
 } from "../api-profiles.js";
 import {
   DEFAULT_REWRITE_API_MODE,
@@ -37,16 +36,16 @@ async function rewriteQuery(question, options = {}) {
     DEFAULT_REWRITE_TEMPERATURE,
   );
   const headers = { "Content-Type": "application/json" };
-  if (requiresAuthorization(apiMode)) {
-    const apiKey = typeof options.apiKey === "string" ? options.apiKey.trim() : "";
-    if (!apiKey) return originalQuestion;
-    headers.Authorization = `Bearer ${apiKey}`;
+  try {
+    const authorization = authorizationHeaderForRequest(apiMode, baseUrl, options.apiKey);
+    if (authorization) headers.Authorization = authorization;
+  } catch {
+    return originalQuestion;
   }
   try {
     const body = isOllamaFamilyMode(apiMode)
-      ? { model, messages: [{ role: "user", content: buildRewritePrompt(originalQuestion) }], stream: false, options: { temperature } }
+      ? { model, messages: [{ role: "user", content: buildRewritePrompt(originalQuestion) }], stream: false, options: { temperature }, think: false }
       : { model, input: buildRewritePrompt(originalQuestion), temperature };
-    if (apiMode === API_MODES.OLLAMA_TOOLS_CHAT) body.think = false;
     const response = await fetch(baseUrl, { method: "POST", headers, body: JSON.stringify(body) });
     if (!response.ok) return originalQuestion;
     const data = await response.json();

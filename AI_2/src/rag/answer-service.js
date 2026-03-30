@@ -131,12 +131,29 @@ async function generateAnswerWithSourcesAndQuotes(question, retrievalResult, con
       validation,
       rawResponseText,
     };
-  } catch {
+  } catch (error) {
     return {
       ...makeSafeAnswerResult({ answer: SAFE_PARSE_FAILURE_ANSWER }),
       diagnostics,
       validation: { valid: false, issues: ["generation_failed"] },
-      rawResponseText,
+      errorType:
+        error && typeof error.errorType === "string" && error.errorType.trim()
+          ? error.errorType.trim()
+          : "model_call_error",
+      errorMessage:
+        error && typeof error.message === "string" && error.message.trim()
+          ? error.message.trim()
+          : String(error),
+      rawResponseText:
+        typeof rawResponseText === "string" && rawResponseText.trim()
+          ? rawResponseText
+          : error && typeof error.rawResponsePreview === "string"
+            ? error.rawResponsePreview
+            : "",
+      rawResponsePreview:
+        error && typeof error.rawResponsePreview === "string"
+          ? error.rawResponsePreview
+          : "",
     };
   }
 }

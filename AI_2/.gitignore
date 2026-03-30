@@ -1,4 +1,5 @@
 private.config.js
+src/config/private.config.js
 task_runtime/service.log
 task_runtime/runtime/
 task_runtime/__pycache__/

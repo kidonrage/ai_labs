@@ -27,14 +27,17 @@ function renderChatList(chats, activeChatId) {
   list.innerHTML = "";
   for (const chat of [...chats].reverse()) {
     const item = document.createElement("button");
+    const title = document.createElement("span");
+    const subtitle = document.createElement("span");
     item.type = "button";
     item.className = `chat-list-item${chat.id === activeChatId ? " active" : ""}`;
     item.dataset.chatId = chat.id;
     item.dataset.chatAction = "select";
-    item.innerHTML = `
-      <span class="chat-list-title">${chat.title}</span>
-      <span class="chat-list-subtitle">${makeChatSubtitle(chat)}</span>
-    `;
+    title.className = "chat-list-title";
+    title.textContent = String(chat.title || "").trim() || "Без названия";
+    subtitle.className = "chat-list-subtitle";
+    subtitle.textContent = makeChatSubtitle(chat);
+    item.append(title, subtitle);
     list.appendChild(item);
   }
   $("deleteChat").disabled = chats.length <= 1;
@@ -88,4 +91,35 @@ function setBatchRunStatus(text, tone = "idle") {
   if (tone === "success") el.classList.add("is-success");
 }
 
-export { renderChatList, renderInvariantControls, renderProfileMenu, setBatchRunStatus };
+function setLlmConfigTestStatus(state = "idle", detail = "") {
+  const el = $("llmConfigTestStatus");
+  if (!el) return;
+  const normalizedState = String(state || "idle").trim() || "idle";
+  const normalizedDetail = String(detail || "").trim();
+  el.hidden = false;
+  el.textContent = normalizedDetail
+    ? `Status: ${normalizedState} • ${normalizedDetail}`
+    : `Status: ${normalizedState}`;
+  el.classList.remove("is-error", "is-success");
+  if (normalizedState === "error") el.classList.add("is-error");
+  if (normalizedState === "done") el.classList.add("is-success");
+}
+
+function setLlmConfigTestDownloadState(ready, filename = "") {
+  const button = $("downloadLlmConfigTestReport");
+  if (!button) return;
+  button.hidden = !ready;
+  button.disabled = !ready;
+  button.textContent = ready && filename
+    ? `Download report: ${filename}`
+    : "Download markdown report";
+}
+
+export {
+  renderChatList,
+  renderInvariantControls,
+  renderProfileMenu,
+  setBatchRunStatus,
+  setLlmConfigTestDownloadState,
+  setLlmConfigTestStatus,
+};
