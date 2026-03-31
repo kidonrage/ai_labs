@@ -66,6 +66,8 @@ async function main() {
   assert.match(compactInput, /SYSTEM DIRECTIVES:/);
   assert.match(compactInput, /LONG-TERM MEMORY:/);
   assert.match(compactInput, /USER MESSAGE HISTORY:/);
+  assert.doesNotMatch(compactInput, /TOOL POLICY:/);
+  assert.doesNotMatch(compactInput, /get_git_branch/);
   assert.doesNotMatch(compactInput, /PLANNER PROMPT:/);
   assert.doesNotMatch(compactInput, /approve/);
 
@@ -99,6 +101,20 @@ async function main() {
   assert.equal((messages[1].content.match(/RETRIEVED CONTEXT:/g) || []).length, 1);
   assert.doesNotMatch(messages[1].content, /RAG-контекст:/);
   assert.doesNotMatch(messages[1].content, /Не перечисляй источники/);
+
+  const branchInput = await compactAgent._buildContextInput("Какая сейчас текущая git ветка?");
+  assert.match(branchInput, /TOOL POLICY:/);
+  assert.match(branchInput, /get_git_branch/);
+  assert.match(branchInput, /Не угадывай название ветки/);
+
+  const branchMessages = compactAgent.contextBuilder.buildOllamaChatMessages(
+    compactAgent,
+    "На какой ветке сейчас репозиторий?",
+  );
+  assert.match(branchMessages[0].content, /TOOL POLICY:/);
+  assert.match(branchMessages[0].content, /get_git_branch/);
+  assert.match(branchMessages[0].content, /обязательно сначала вызови MCP tool/);
+  assert.doesNotMatch(branchMessages[1].content, /get_git_branch/);
 }
 
 main();

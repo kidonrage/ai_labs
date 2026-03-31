@@ -1,6 +1,22 @@
 import { API_MODES } from "../api-profiles.js";
 import { buildProfilePriorityInstructions } from "./user-profile.js";
 
+const GIT_BRANCH_TOOL_NAME = "get_git_branch";
+const BRANCH_INTENT_PATTERNS = [
+  /\bcurrent\s+git\s+branch\b/i,
+  /\bcurrent\s+branch\b/i,
+  /\bwhat\s+branch\b/i,
+  /\bwhich\s+branch\b/i,
+  /\bbranch\s+am\s+i\s+on\b/i,
+  /\bgit\s+branch\b/i,
+  /текущ\w*\s+(?:git[-\s]*)?ветк/i,
+  /ка\w*\s+(?:git[-\s]*)?ветк/i,
+  /на\s+какой\s+(?:git[-\s]*)?ветк/i,
+  /как\w*\s+назв\w*\s+(?:git[-\s]*)?ветк/i,
+  /ветк\w*.*сейчас/i,
+  /сейчас.*ветк\w*/i,
+];
+
 function buildCompactUserMessages(history, nextUserText) {
   const messages = (Array.isArray(history) ? history : [])
     .filter((item) => item && item.role === "user")
@@ -43,6 +59,24 @@ function resolveSystemPreamble(agent) {
   return override || String(agent.systemPreamble || "").trim();
 }
 
+function requiresGitBranchTool(agent, userRequest) {
+  if (agent?.apiMode !== API_MODES.OLLAMA_TOOLS_CHAT) return false;
+  const text = String(userRequest || "").trim();
+  if (!text) return false;
+  return BRANCH_INTENT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function buildToolPolicy(agent, userRequest) {
+  if (!requiresGitBranchTool(agent, userRequest)) return "";
+  return (
+    `TOOL POLICY:\n` +
+    `Если пользователь спрашивает о текущей git-ветке проекта или о том, на какой ветке сейчас репозиторий, ` +
+    `обязательно сначала вызови MCP tool ${GIT_BRANCH_TOOL_NAME}. ` +
+    `Не угадывай название ветки и не отвечай по памяти. ` +
+    `Если tool вернул ошибку, кратко передай пользователю эту ошибку.`
+  );
+}
+
 function buildPromptContract(agent, nextUserText, runtimeContext = null) {
   const keepLast = Math.max(1, Number(agent.contextPolicy.keepLastMessages) || 12);
   const tail = agent.history.slice(-keepLast);
@@ -77,6 +111,7 @@ function buildPromptContract(agent, nextUserText, runtimeContext = null) {
     resolveSystemPreamble(agent),
     buildProfilePriorityInstructions(agent.userProfile),
     buildInvariantPolicy(agent.invariants),
+    buildToolPolicy(agent, userRequest),
   ].filter(Boolean);
 
   if (runtimeContext?.rag?.answerPolicy) {
