@@ -82,13 +82,21 @@ class RagAnswerService {
   }
 
   async answerWithRag(agent, payload) {
-    const rag = await retrieveChunks(payload.userText, agent.ragConfig);
+    const ragOptions =
+      payload && payload.ragOptions && typeof payload.ragOptions === "object"
+        ? payload.ragOptions
+        : {};
+    const effectiveRagConfig = {
+      ...agent.ragConfig,
+      ...ragOptions,
+    };
+    const rag = await retrieveChunks(payload.userText, effectiveRagConfig);
     let completion = null;
     const answerResult = await generateAnswerWithSourcesAndQuotes(
       payload.userText,
       rag,
       {
-        ...agent.ragConfig,
+        ...effectiveRagConfig,
         requestCompletion: async (promptSpec) => {
           const ragPrompt =
             promptSpec && typeof promptSpec === "object" && !Array.isArray(promptSpec)

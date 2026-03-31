@@ -1,5 +1,6 @@
 import { formatTime, shouldRestoreOptimisticUserMessage } from "../helpers.js";
 import { renderHistory, renderTaskStatus } from "../ui.js";
+import { HelpCommandService } from "./help-command-service.js";
 import { $ } from "./utils.js";
 
 function parseTaskCommand(text) {
@@ -22,6 +23,7 @@ class ComposerController {
     this.isUiBusy = isUiBusy;
     this.setSending = setSending;
     this.renderWorkspaceChrome = renderWorkspaceChrome;
+    this.helpCommand = new HelpCommandService({ session });
   }
 
   pushAssistantMessage(text) {
@@ -93,6 +95,7 @@ class ComposerController {
     const text = $("input").value;
     if (!text.trim() || !agent || this.isUiBusy()) return;
     this.session.syncAgentConfig();
+    const isHelpCommand = this.helpCommand.isHelpCommand(text);
     const historyBaselineLength = Array.isArray(agent.history) ? agent.history.length : 0;
     const optimisticUser = { role: "user", text, at: new Date().toISOString() };
     agent.history.push(optimisticUser);
@@ -107,10 +110,15 @@ class ComposerController {
     $("messages").appendChild(typing);
     $("messages").scrollTop = $("messages").scrollHeight;
     let handledByTaskMachine = false;
+    let handledByHelpCommand = false;
     let poppedForRegularSend = false;
     try {
-      handledByTaskMachine = await this.handleTaskCommandOrStep(text);
-      if (!handledByTaskMachine) {
+      if (isHelpCommand) {
+        handledByHelpCommand = await this.helpCommand.handle(text, optimisticUser);
+      } else {
+        handledByTaskMachine = await this.handleTaskCommandOrStep(text);
+      }
+      if (!handledByTaskMachine && !handledByHelpCommand) {
         agent.history.pop();
         poppedForRegularSend = true;
         agent._emitStateChanged();
