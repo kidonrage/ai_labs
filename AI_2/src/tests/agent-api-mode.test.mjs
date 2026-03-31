@@ -60,16 +60,16 @@ async function main() {
     { role: "assistant", text: "ответ", at: new Date().toISOString() },
   );
   const compactInput = await mcpAgent._buildContextInput("второй вопрос");
-  assert.match(compactInput, /SYSTEM DIRECTIVES:/);
-  assert.match(compactInput, /ACTIVE USER PROFILE:/);
-  assert.match(compactInput, /ACTIVE INVARIANTS:/);
-  assert.match(compactInput, /LONG-TERM MEMORY:/);
-  assert.match(compactInput, /WORKING MEMORY:/);
-  assert.match(compactInput, /SHORT-TERM MEMORY:/);
-  assert.match(compactInput, /USER MESSAGE HISTORY:/);
-  assert.match(compactInput, /первый вопрос/);
+  assert.match(compactInput, /Ты полезный ассистент/);
   assert.match(compactInput, /второй вопрос/);
-  assert.match(compactInput, /ответ/);
+  assert.doesNotMatch(compactInput, /первый вопрос/);
+  assert.doesNotMatch(compactInput, /ответ/);
+  assert.doesNotMatch(compactInput, /ACTIVE USER PROFILE:/);
+  assert.doesNotMatch(compactInput, /ACTIVE INVARIANTS:/);
+  assert.doesNotMatch(compactInput, /LONG-TERM MEMORY:/);
+  assert.doesNotMatch(compactInput, /WORKING MEMORY:/);
+  assert.doesNotMatch(compactInput, /SHORT-TERM MEMORY:/);
+  assert.doesNotMatch(compactInput, /USER MESSAGE HISTORY:/);
   assert.doesNotMatch(compactInput, /PLANNER PROMPT:/);
   assert.doesNotMatch(compactInput, /INVARIANT CHECKER PROMPT:/);
   assert.doesNotMatch(compactInput, /REFUSAL MODE PROMPT:/);
@@ -88,9 +88,10 @@ async function main() {
     at: new Date().toISOString(),
   });
   const firstTurnInput = await firstTurnAgent._buildContextInput("собери summary");
-  assert.match(firstTurnInput, /USER MESSAGE HISTORY:/);
-  assert.match(firstTurnInput, /"собери summary"/);
-  assert.match(firstTurnInput, /USER REQUEST:/);
+  assert.match(firstTurnInput, /Ты полезный ассистент/);
+  assert.match(firstTurnInput, /собери summary/);
+  assert.doesNotMatch(firstTurnInput, /USER MESSAGE HISTORY:/);
+  assert.doesNotMatch(firstTurnInput, /USER REQUEST:/);
 
   assert.equal(
     Agent.extractUserVisibleAnswer(

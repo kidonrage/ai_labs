@@ -77,7 +77,28 @@ function buildToolPolicy(agent, userRequest) {
   );
 }
 
+function buildMinimalOllamaToolsContract(agent, nextUserText, runtimeContext = null) {
+  const userRequest = String(
+    nextUserText || runtimeContext?.rag?.question || "",
+  ).trim();
+  const systemDirectives = [
+    resolveSystemPreamble(agent),
+    buildToolPolicy(agent, userRequest),
+  ].filter(Boolean);
+  if (runtimeContext?.rag?.answerPolicy) {
+    systemDirectives.push(String(runtimeContext.rag.answerPolicy).trim());
+  }
+  return {
+    systemDirectives,
+    contextBlocks: [],
+    userMessage: userRequest,
+  };
+}
+
 function buildPromptContract(agent, nextUserText, runtimeContext = null) {
+  if (agent?.apiMode === API_MODES.OLLAMA_TOOLS_CHAT) {
+    return buildMinimalOllamaToolsContract(agent, nextUserText, runtimeContext);
+  }
   const keepLast = Math.max(1, Number(agent.contextPolicy.keepLastMessages) || 12);
   const tail = agent.history.slice(-keepLast);
   const userRequest = String(
@@ -150,6 +171,15 @@ function compilePromptInput(contract) {
   return parts.join("\n\n");
 }
 
+function compileMinimalPromptInput(contract) {
+  const systemText = (Array.isArray(contract?.systemDirectives) ? contract.systemDirectives : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const userText = String(contract?.userMessage || "").trim();
+  return [systemText, userText].filter(Boolean).join("\n\n");
+}
+
 function compilePromptMessages(contract) {
   const systemText = (Array.isArray(contract?.systemDirectives) ? contract.systemDirectives : [])
     .map((item) => String(item || "").trim())
@@ -162,6 +192,17 @@ function compilePromptMessages(contract) {
   return [
     { role: "system", content: systemText },
     { role: "user", content: userParts.join("\n\n") },
+  ];
+}
+
+function compileMinimalPromptMessages(contract) {
+  const systemText = (Array.isArray(contract?.systemDirectives) ? contract.systemDirectives : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+  return [
+    { role: "system", content: systemText },
+    { role: "user", content: String(contract?.userMessage || "").trim() },
   ];
 }
 
@@ -190,7 +231,7 @@ class ContextBuilderRouter {
   build(agent, nextUserText, runtimeContext = null) {
     const contract = this.buildPromptContract(agent, nextUserText, runtimeContext);
     if (agent.apiMode === API_MODES.OLLAMA_TOOLS_CHAT) {
-      return this.compactBuilder.build(agent, nextUserText, runtimeContext);
+      return compileMinimalPromptInput(contract);
     }
     if (agent.apiMode === API_MODES.OLLAMA_CHAT) {
       return compilePromptInput(contract);
@@ -199,9 +240,11 @@ class ContextBuilderRouter {
   }
 
   buildOllamaChatMessages(agent, nextUserText, runtimeContext = null) {
-    return compilePromptMessages(
-      this.buildPromptContract(agent, nextUserText, runtimeContext),
-    );
+    const contract = this.buildPromptContract(agent, nextUserText, runtimeContext);
+    if (agent.apiMode === API_MODES.OLLAMA_TOOLS_CHAT) {
+      return compileMinimalPromptMessages(contract);
+    }
+    return compilePromptMessages(contract);
   }
 }
 

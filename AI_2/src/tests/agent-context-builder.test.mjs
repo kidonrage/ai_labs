@@ -63,9 +63,12 @@ async function main() {
   );
 
   const compactInput = await compactAgent._buildContextInput("второй");
-  assert.match(compactInput, /SYSTEM DIRECTIVES:/);
-  assert.match(compactInput, /LONG-TERM MEMORY:/);
-  assert.match(compactInput, /USER MESSAGE HISTORY:/);
+  assert.match(compactInput, /Ты полезный ассистент/);
+  assert.match(compactInput, /второй/);
+  assert.doesNotMatch(compactInput, /LONG-TERM MEMORY:/);
+  assert.doesNotMatch(compactInput, /USER MESSAGE HISTORY:/);
+  assert.doesNotMatch(compactInput, /ACTIVE USER PROFILE:/);
+  assert.doesNotMatch(compactInput, /ACTIVE INVARIANTS:/);
   assert.doesNotMatch(compactInput, /TOOL POLICY:/);
   assert.doesNotMatch(compactInput, /get_git_branch/);
   assert.doesNotMatch(compactInput, /PLANNER PROMPT:/);
@@ -78,8 +81,10 @@ async function main() {
       answerPolicy: "Только по контексту.",
     },
   });
-  assert.match(compactWithRag, /RETRIEVED CONTEXT:/);
-  assert.match(compactWithRag, /retrieved chunk/);
+  assert.match(compactWithRag, /Только по контексту/);
+  assert.match(compactWithRag, /второй/);
+  assert.doesNotMatch(compactWithRag, /RETRIEVED CONTEXT:/);
+  assert.doesNotMatch(compactWithRag, /retrieved chunk/);
 
   const messages = compactAgent.contextBuilder.buildOllamaChatMessages(compactAgent, "второй", {
     rag: {
@@ -91,19 +96,22 @@ async function main() {
   assert.equal(messages.length, 2);
   assert.equal(messages[0].role, "system");
   assert.equal(messages[1].role, "user");
-  assert.match(messages[0].content, /PROFILE DIRECTIVES/);
+  assert.match(messages[0].content, /Ты полезный ассистент/);
   assert.match(messages[0].content, /Только по контексту/);
   assert.doesNotMatch(messages[0].content, /FINAL RESPONDER PROMPT:/);
   assert.doesNotMatch(messages[0].content, /Hard constraints: \(none\)/);
+  assert.doesNotMatch(messages[0].content, /PROFILE DIRECTIVES/);
+  assert.doesNotMatch(messages[0].content, /ACTIVE INVARIANTS/);
   assert.doesNotMatch(messages[0].content, /approve/);
-  assert.match(messages[1].content, /RETRIEVED CONTEXT:/);
-  assert.match(messages[1].content, /USER REQUEST:/);
-  assert.equal((messages[1].content.match(/RETRIEVED CONTEXT:/g) || []).length, 1);
+  assert.equal(messages[1].content, "второй");
+  assert.doesNotMatch(messages[1].content, /RETRIEVED CONTEXT:/);
+  assert.doesNotMatch(messages[1].content, /USER REQUEST:/);
   assert.doesNotMatch(messages[1].content, /RAG-контекст:/);
   assert.doesNotMatch(messages[1].content, /Не перечисляй источники/);
+  assert.doesNotMatch(messages[1].content, /retrieved chunk/);
 
   const branchInput = await compactAgent._buildContextInput("Какая сейчас текущая git ветка?");
-  assert.match(branchInput, /TOOL POLICY:/);
+  assert.match(branchInput, /Какая сейчас текущая git ветка\?/);
   assert.match(branchInput, /get_git_branch/);
   assert.match(branchInput, /Не угадывай название ветки/);
 
@@ -114,7 +122,7 @@ async function main() {
   assert.match(branchMessages[0].content, /TOOL POLICY:/);
   assert.match(branchMessages[0].content, /get_git_branch/);
   assert.match(branchMessages[0].content, /обязательно сначала вызови MCP tool/);
-  assert.doesNotMatch(branchMessages[1].content, /get_git_branch/);
+  assert.equal(branchMessages[1].content, "На какой ветке сейчас репозиторий?");
 }
 
 main();
