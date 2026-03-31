@@ -151,13 +151,14 @@ AI_2/
 
 Отдельный учебный Python-скрипт, который строит RAG-индексы по локальным документам и записывает `index_fixed.json` и `index_structured.json`.
 
-### `search_server.py`, `summarize_server.py`, `save_server.py`, `pipeline_server.py`
+### `search_server.py`, `summarize_server.py`, `save_server.py`, `git_branch_server.py`, `pipeline_server.py`
 
 Простые демонстрационные MCP/FastMCP-сервисы:
 
 - поиск по локальному словарю;
 - примитивная суммаризация;
 - сохранение результата в файл;
+- получение имени текущей git-ветки проекта;
 - оркестрация этих шагов в пайплайн.
 
 ### `simple_pipeline_mcp/`
@@ -186,6 +187,7 @@ AI_2/
 
 - `Ollama`, если нужен локальный LLM или RAG;
 - доступ к ProxyAPI, если нужен внешний провайдер;
+- `git`, если вы хотите запускать MCP tool `get_git_branch`;
 - Python-библиотека `mcp`, если вы хотите запускать MCP-демо-сервисы.
 
 ## Быстрый старт
@@ -236,6 +238,22 @@ export const PRIVATE_APP_CONFIG = {
 - `Ollama Chat` для локального Ollama;
 - `Remote Ollama` для удаленного Ollama;
 - `Ollama + MCP` для сценариев с инструментами.
+
+### Дополнительно: MCP server `get_git_branch`
+
+Из корня проекта:
+
+```bash
+python3 ./git_branch_server.py
+```
+
+Сервер использует `stdio` transport и зарегистрирован в `mcp-config.json`.
+Для ручной проверки через MCP-клиент вызовите tool `get_git_branch`.
+При успехе сервер вернет структуру вида:
+
+```json
+{"branch": "feat/local_testing"}
+```
 
 ## Запуск с Ollama
 

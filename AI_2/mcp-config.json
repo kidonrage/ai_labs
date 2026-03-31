@@ -14,6 +14,13 @@
         "tools": ["search"]
       }
     },
+    "get_git_branch": {
+      "command": "python3",
+      "args": ["./git_branch_server.py"],
+      "toolFilter": {
+        "tools": ["get_git_branch"]
+      }
+    },
     "summarize": {
       "command": "python3",
       "args": ["./summarize_server.py"],
