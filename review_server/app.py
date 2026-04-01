@@ -10,7 +10,7 @@ app = FastAPI(title="AI PR Review Service")
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:1.7b")
-OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
+OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120"))
 
 
 class PullRequestInfo(BaseModel):
@@ -34,96 +34,86 @@ class ReviewResponse(BaseModel):
 
 
 def retrieve_context(payload: ReviewRequest) -> str:
-    """
-    Временная заглушка под RAG.
-
-    Потом сюда можно встроить:
-    - README
-    - docs/
-    - релевантные чанки кода по changed_files
-    - поиск по символам из diff
-    """
-    if payload.changed_files:
-        files_preview = ", ".join(payload.changed_files[:10])
-    else:
-        files_preview = "no changed files provided"
-
-    return (
-        "Project documentation and code context are not connected yet. "
-        f"Changed files received: {files_preview}."
-    )
+    files_preview = ", ".join(payload.changed_files[:10]) if payload.changed_files else "no changed files"
+    return f"Changed files: {files_preview}. Project RAG is not connected yet."
 
 
 def build_system_prompt() -> str:
     return """
-You are a senior software engineer performing pull request review.
+You are a senior software engineer reviewing a pull request.
 
-Your job is to analyze the pull request changes and produce a grounded markdown review.
-
-Rules:
-- Focus only on issues supported by the diff and project context.
-- Do not invent problems without evidence.
-- Prefer concrete, practical feedback over generic advice.
-- Mention file names when possible.
-- If confidence is limited, say so explicitly.
-- Keep the review concise but useful.
+Be concise and grounded.
+Use only the provided diff and context.
+Do not invent issues without evidence.
 
 Return markdown with exactly these sections:
 
 ## AI PR Review
 
 ### Summary
-A short overall assessment.
-
 ### Potential bugs
-Bullet list of likely bugs or risky logic issues.
-If none are visible, say "- No concrete bugs found in the provided diff."
-
 ### Architectural concerns
-Bullet list of maintainability / layering / duplication / abstraction issues.
-If none are visible, say "- No major architectural concerns found in the provided diff."
-
 ### Recommendations
-Bullet list of improvements, tests, or follow-up checks.
-If none are needed, say "- No additional recommendations."
-
 ### Confidence
-High / Medium / Low with one short explanation.
 """.strip()
 
 
 def build_user_prompt(payload: ReviewRequest, rag_context: str) -> str:
-    changed_files_str = "\n".join(f"- {path}" for path in payload.changed_files) or "- none"
+    limited_files = payload.changed_files[:15]
+    changed_files_str = "\n".join(f"- {path}" for path in limited_files) or "- none"
 
-    diff_limit = 100_000
+    diff_limit = 20000
     diff_text = payload.diff[:diff_limit]
     truncated_note = ""
     if len(payload.diff) > diff_limit:
-        truncated_note = "\nNOTE: The diff was truncated due to context limits."
+        truncated_note = "\nNOTE: Diff was truncated due to size limits."
 
     return f"""
 Repository: {payload.repository}
-
-PR number: {payload.pull_request.number}
 PR title: {payload.pull_request.title}
-PR body: {payload.pull_request.body}
-Author: {payload.pull_request.author}
-Base branch: {payload.pull_request.base_ref}
-Head branch: {payload.pull_request.head_ref}
 
 Changed files:
 {changed_files_str}
 
-Project context:
+Context:
 {rag_context}
 
-PR diff:
+Diff:
 {diff_text}{truncated_note}
 """.strip()
 
 
-def call_ollama_chat(system_prompt: str, user_prompt: str) -> str:
-    payload: dict[str, Any] = {
+def fallback_review(reason: str, payload: ReviewRequest) -> str:
+    files_md = "\n".join(f"- `{f}`" for f in payload.changed_files[:15]) or "- No files detected"
+
+    return f"""## AI PR Review
+
+### Summary
+The automated review pipeline ran, but the local LLM did not finish in time.
+
+### Potential bugs
+- Full model-based review was not completed because Ollama timed out.
+- Large diffs may overload the current local model setup.
+
+### Architectural concerns
+- No grounded architectural review was produced for this run.
+
+### Recommendations
+- Split the PR into smaller changes if possible.
+- Reduce the diff size sent to the model.
+- Upgrade to a stronger/faster model or increase server resources.
+- Add RAG and review files in chunks instead of one large prompt.
+
+### Confidence
+Low — fallback response returned because: {reason}
+
+### Files in PR
+{files_md}
+"""
+
+
+def call_ollama_chat(system_prompt: str, user_prompt: str, payload: ReviewRequest) -> str:
+    body: dict[str, Any] = {
         "model": OLLAMA_MODEL,
         "stream": False,
         "think": False,
@@ -132,35 +122,40 @@ def call_ollama_chat(system_prompt: str, user_prompt: str) -> str:
             {"role": "user", "content": user_prompt},
         ],
         "options": {
-            "temperature": 0.2,
+            "temperature": 0.1,
+            "num_predict": 700,
         },
     }
 
-    response = requests.post(
-        OLLAMA_URL,
-        json=payload,
-        timeout=OLLAMA_TIMEOUT_SECONDS,
-    )
+    print(f"Ollama model: {OLLAMA_MODEL}")
+    print(f"Prompt length: {len(system_prompt) + len(user_prompt)}")
+    print(f"Diff length: {len(payload.diff)}")
+    print(f"Changed files count: {len(payload.changed_files)}")
 
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Ollama returned status {response.status_code}: {response.text[:1000]}",
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json=body,
+            timeout=OLLAMA_TIMEOUT_SECONDS,
         )
+        response.raise_for_status()
+    except requests.exceptions.Timeout:
+        return fallback_review("Ollama request timed out", payload)
+    except requests.exceptions.RequestException as exc:
+        return fallback_review(f"Ollama request failed: {exc}", payload)
 
     data = response.json()
-    message = data.get("message", {})
-    content = message.get("content", "").strip()
+    content = data.get("message", {}).get("content", "").strip()
 
     if not content:
-        raise HTTPException(status_code=502, detail="Ollama returned empty content")
+        return fallback_review("Ollama returned empty content", payload)
 
     return content
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "version": "ollama-timeout-safe-v1"}
 
 
 @app.post("/api/review-pr", response_model=ReviewResponse)
@@ -172,6 +167,5 @@ def review_pr(payload: ReviewRequest) -> ReviewResponse:
     system_prompt = build_system_prompt()
     user_prompt = build_user_prompt(payload, rag_context)
 
-    review_text = call_ollama_chat(system_prompt, user_prompt)
-
+    review_text = call_ollama_chat(system_prompt, user_prompt, payload)
     return ReviewResponse(review=review_text)
